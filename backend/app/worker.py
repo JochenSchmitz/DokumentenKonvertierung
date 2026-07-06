@@ -100,7 +100,7 @@ async def _process(doc_id) -> None:
         doc = db.get(Document, doc_id)
         original = config.ORIGINALS_DIR / doc.stored_name
         filename = doc.filename
-    CURRENT = {'filename': filename, 'pages': None}
+    CURRENT = {'id': str(doc_id), 'filename': filename, 'pages': None}
 
     loop = asyncio.get_running_loop()
     sem = asyncio.Semaphore(config.OCR_PARALLEL)
@@ -120,7 +120,7 @@ async def _process(doc_id) -> None:
             async with sem:
                 return await ocr.ocr_page(client, png)
 
-        CURRENT = {'filename': filename, 'pages': len(images)}
+        CURRENT = {'id': str(doc_id), 'filename': filename, 'pages': len(images)}
         log.info('%s: %d Seiten -> Modell', filename, len(images))
         texts = await asyncio.gather(*(read_page(png) for png in images))
         meta = await ocr.extract_metadata(client, '\n\n'.join(texts))

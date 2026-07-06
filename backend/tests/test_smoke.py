@@ -7,6 +7,8 @@ import os
 
 os.environ.setdefault('AUTH_USERS', 'test@example.org:test-passwort')
 os.environ.setdefault('AUTH_SECRET', 'test-secret')
+# Kein Worker in Tests — er würde echte Dokumente aus der Queue claimen
+os.environ['WORKER_ENABLED'] = '0'
 
 from fastapi.testclient import TestClient  # noqa: E402
 

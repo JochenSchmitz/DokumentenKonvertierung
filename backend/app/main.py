@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -50,11 +51,17 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
     with engine.connect() as connection:
         _init_search(connection)
-    from .worker import worker_loop
+    # WORKER_ENABLED=0 z.B. in Tests: dort darf kein Worker gegen die
+    # echte Datenbank laufen (er würde Dokumente aus der Queue claimen
+    # und beim Testende verwaiste processing-Flags hinterlassen).
+    task = None
+    if os.environ.get('WORKER_ENABLED', '1') == '1':
+        from .worker import worker_loop
 
-    task = asyncio.create_task(worker_loop())
+        task = asyncio.create_task(worker_loop())
     yield
-    task.cancel()
+    if task is not None:
+        task.cancel()
 
 
 app = FastAPI(title='Dokumente-OCR', lifespan=lifespan)

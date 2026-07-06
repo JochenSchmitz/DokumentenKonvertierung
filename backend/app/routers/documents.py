@@ -67,6 +67,8 @@ def list_documents(db: SessionDep, user: auth.UserDep, q: str = ''):
     "Gewährleistung". Die GIN-Trigram-Expression-Indizes halten die
     ILIKE-'%...%'-Suchen auch bei großen Beständen schnell.
     """
+    from .. import worker
+
     stmt = select(Document).order_by(Document.uploaded_at.desc())
     q = ''.join(q.split())  # Whitespace aus der Query entfernen
     if q:
@@ -93,7 +95,21 @@ def list_documents(db: SessionDep, user: auth.UserDep, q: str = ''):
                 page_match,
             )
         )
-    return db.scalars(stmt).all()
+
+    # Anzeige-Wahrheit: 'processing' zeigt nur das Dokument, das der
+    # (einzige) Worker laut eigener Auskunft WIRKLICH bearbeitet.
+    # Verwaiste Flags (Absturz, Neustart) erscheinen als 'wartet',
+    # bis die Selbstheilung sie requeued.
+    current = worker.CURRENT
+    result = []
+    for doc in db.scalars(stmt).all():
+        item = DocumentOut.model_validate(doc)
+        if item.status == DocStatus.processing and (
+            current is None or current.get('id') != str(doc.id)
+        ):
+            item.status = DocStatus.pending
+        result.append(item)
+    return result
 
 
 def _get_document(doc_id: uuid.UUID, db: Session, with_pages: bool = False) -> Document:
