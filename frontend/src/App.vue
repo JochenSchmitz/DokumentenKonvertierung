@@ -18,6 +18,12 @@ const store = useDocumentsStore()
 const router = useRouter()
 const version = ref('')
 
+// Splashscreen: beim App-Start 3 s das Logo zeigen, dann ausblenden
+const splash = ref(true)
+onMounted(() => {
+  setTimeout(() => (splash.value = false), 3000)
+})
+
 async function logout() {
   await auth.logout()
   router.push({ name: 'login' })
@@ -57,6 +63,13 @@ function fmt(n: number): string {
 </script>
 
 <template>
+  <Transition name="splash">
+    <div v-if="splash" class="splash">
+      <img src="/logo.png" alt="FES Logo" />
+      <span>Dokumente-OCR</span>
+    </div>
+  </Transition>
+
   <div class="shell">
     <header class="topbar">
       <button class="brand" title="Seite neu laden" @click="reload">
@@ -66,6 +79,7 @@ function fmt(n: number): string {
       <button v-if="auth.loggedIn" class="logout" @click="logout">
         <MdiIcon :path="mdiLogout" /> Abmelden
       </button>
+      <img src="/logo.png" alt="FES Logo" class="header-logo" />
     </header>
 
     <main>
@@ -137,6 +151,42 @@ function fmt(n: number): string {
   background: none;
   border: none;
   padding: 0.2rem 0;
+}
+.header-logo {
+  height: 2.2rem;
+  width: auto;
+}
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: var(--bg);
+}
+.splash img {
+  width: min(340px, 60vw);
+  height: auto;
+  animation: splash-in 0.8s ease-out;
+}
+.splash span {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text-h);
+  letter-spacing: 0.04em;
+}
+@keyframes splash-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+.splash-leave-active {
+  transition: opacity 0.4s ease;
+}
+.splash-leave-to {
+  opacity: 0;
 }
 .spacer {
   flex: 1;
