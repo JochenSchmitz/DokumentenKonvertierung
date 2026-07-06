@@ -72,14 +72,14 @@ function fmt(n: number): string {
 
   <div class="shell">
     <header class="topbar">
+      <img src="/logo.png" alt="FES Logo" class="header-logo" />
       <button class="brand" title="Seite neu laden" @click="reload">
-        📄 Dokumente-OCR
+        Dokumente-OCR
       </button>
       <span class="spacer" />
       <button v-if="auth.loggedIn" class="logout" @click="logout">
         <MdiIcon :path="mdiLogout" /> Abmelden
       </button>
-      <img src="/logo.png" alt="FES Logo" class="header-logo" />
     </header>
 
     <main>
