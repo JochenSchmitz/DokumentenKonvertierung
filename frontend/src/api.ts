@@ -60,8 +60,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export const api = {
   config: () => request<AppConfig>('/api/config'),
   status: () => request<ProcessingStatus>('/api/status'),
-  list: (q = '') =>
-    request<DocumentOut[]>(`/api/documents?q=${encodeURIComponent(q)}`),
+  list: (q = '', tags: string[] = []) =>
+    request<DocumentOut[]>(
+      `/api/documents?q=${encodeURIComponent(q)}&tags=${encodeURIComponent(tags.join(','))}`,
+    ),
   get: (id: string) => request<DocumentDetail>(`/api/documents/${id}`),
   upload: (files: File[]) => {
     const body = new FormData()

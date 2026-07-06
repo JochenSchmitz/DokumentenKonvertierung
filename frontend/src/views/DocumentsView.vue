@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { mdiDelete, mdiDownload, mdiMagnify, mdiReload } from '@mdi/js'
+import {
+  mdiClose,
+  mdiDelete,
+  mdiDownload,
+  mdiMagnify,
+  mdiReload,
+  mdiTagOutline,
+} from '@mdi/js'
 import MdiIcon from '../components/MdiIcon.vue'
 import UploadZone from '../components/UploadZone.vue'
 import { useDocumentsStore } from '../stores/documents'
@@ -144,6 +151,19 @@ onUnmounted(() => {
             noch {{ 4 - store.query.trim().length }} Zeichen …
           </span>
         </span>
+        <span v-if="store.selectedTags.length" class="tag-filter">
+          <button
+            v-for="tag in store.selectedTags"
+            :key="tag"
+            class="tag active"
+            title="Filter entfernen"
+            @click="store.toggleTag(tag)"
+          >
+            <MdiIcon :path="mdiTagOutline" :size="13" />
+            {{ tag }}
+            <MdiIcon :path="mdiClose" :size="13" />
+          </button>
+        </span>
       </header>
       <div class="tile-body">
         <p v-if="store.error" class="error">{{ store.error }}</p>
@@ -170,7 +190,16 @@ onUnmounted(() => {
               <td>{{ doc.page_count ?? '—' }}</td>
               <td>{{ fmtDate(doc.doc_date) }}</td>
               <td>
-                <span v-for="tag in doc.tags" :key="tag" class="tag">{{ tag }}</span>
+                <button
+                  v-for="tag in doc.tags"
+                  :key="tag"
+                  class="tag"
+                  :class="{ active: store.selectedTags.includes(tag) }"
+                  :title="store.selectedTags.includes(tag)
+                    ? 'Filter entfernen'
+                    : 'Nach diesem Schlagwort filtern'"
+                  @click="store.toggleTag(tag)"
+                >{{ tag }}</button>
               </td>
               <td>{{ fmtSize(doc.size_bytes) }}</td>
               <td class="actions">
@@ -339,14 +368,32 @@ td {
   max-width: 46ch;
 }
 .tag {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
   background: var(--accent-bg);
   color: var(--accent);
+  border: 1px solid transparent;
   border-radius: 999px;
   padding: 0.05rem 0.55rem;
   font-size: 0.78rem;
   margin: 0 0.25rem 0.25rem 0;
   white-space: nowrap;
+  cursor: pointer;
+}
+.tag:hover {
+  border-color: var(--accent);
+}
+.tag.active {
+  background: var(--accent);
+  color: #fff;
+}
+.tag-filter {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  font-weight: 400;
 }
 .actions {
   white-space: nowrap;

@@ -57,7 +57,7 @@ async def upload(files: list[UploadFile], db: SessionDep, user: auth.UserDep):
 
 
 @router.get('', response_model=list[DocumentOut])
-def list_documents(db: SessionDep, user: auth.UserDep, q: str = ''):
+def list_documents(db: SessionDep, user: auth.UserDep, q: str = '', tags: str = ''):
     """Dokumentliste, optional gefiltert per Trigram-Suche (pg_trgm).
 
     Durchsucht Dateiname, Zusammenfassung, Schlagworte und den
@@ -70,6 +70,13 @@ def list_documents(db: SessionDep, user: auth.UserDep, q: str = ''):
     from .. import worker
 
     stmt = select(Document).order_by(Document.uploaded_at.desc())
+
+    # Zusätzlicher Tag-Filter (kommagetrennt): Dokument muss ALLE
+    # angeklickten Schlagworte tragen (Postgres-Array-Contains @>).
+    tag_list = [t for t in (s.strip() for s in tags.split(',')) if t]
+    if tag_list:
+        stmt = stmt.where(Document.tags.contains(tag_list))
+
     q = ''.join(q.split())  # Whitespace aus der Query entfernen
     if q:
         escaped = q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')

@@ -9,10 +9,11 @@ import {
 export const useDocumentsStore = defineStore('documents', {
   state: () => ({
     docs: [] as DocumentOut[],
-    // Suchtreffer für die Kachel "Bearbeitete Dokumente" — null = keine
-    // aktive Suche. Die Warteschlange nutzt immer die ungefilterte Liste.
+    // Suchtreffer für die Kachel "Bearbeitete Dokumente" — null = kein
+    // aktiver Filter. Die Warteschlange nutzt immer die ungefilterte Liste.
     results: null as DocumentOut[] | null,
     query: '',
+    selectedTags: [] as string[],
     loading: false,
     uploading: false,
     error: '' as string,
@@ -47,19 +48,30 @@ export const useDocumentsStore = defineStore('documents', {
       }
     },
 
-    /** Suche (ab 4 Zeichen) — betrifft nur die Ergebnisliste. */
+    /** Suche (ab 4 Zeichen) und/oder Tag-Filter — nur für die Ergebnisliste. */
     async search() {
       const q = this.query.trim()
-      if (q.length < 4) {
+      const effectiveQ = q.length >= 4 ? q : ''
+      if (!effectiveQ && this.selectedTags.length === 0) {
         this.results = null
         return
       }
       try {
-        this.results = await api.list(q)
+        this.results = await api.list(effectiveQ, this.selectedTags)
         this.error = ''
       } catch (e) {
         this.error = (e as Error).message
       }
+    },
+
+    /** Schlagwort an-/abwählen (Klick auf einen Tag). */
+    async toggleTag(tag: string) {
+      if (this.selectedTags.includes(tag)) {
+        this.selectedTags = this.selectedTags.filter((t) => t !== tag)
+      } else {
+        this.selectedTags = [...this.selectedTags, tag]
+      }
+      await this.search()
     },
 
     async upload(files: File[]) {
