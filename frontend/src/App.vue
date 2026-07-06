@@ -1,52 +1,188 @@
 <script setup lang="ts">
-import { RouterView, RouterLink, useRouter } from 'vue-router'
+import { onMounted, ref, watch } from 'vue'
+import { RouterView, useRouter } from 'vue-router'
+import {
+  mdiAccount,
+  mdiCounter,
+  mdiFileDocumentOutline,
+  mdiLogout,
+  mdiTagOutline,
+  mdiTrayFull,
+} from '@mdi/js'
+import MdiIcon from './components/MdiIcon.vue'
 import { useAuthStore } from './stores/auth'
+import { useDocumentsStore } from './stores/documents'
 
 const auth = useAuthStore()
+const store = useDocumentsStore()
 const router = useRouter()
+const version = ref('')
 
 async function logout() {
   await auth.logout()
   router.push({ name: 'login' })
 }
+
+function reload() {
+  window.location.href = '/'
+}
+
+onMounted(async () => {
+  try {
+    version.value = (await (await fetch('/api/version')).json()).version
+  } catch {
+    /* Chip bleibt leer */
+  }
+})
+
+// Footer-Status: alle 5 s aktualisieren, solange jemand angemeldet ist
+let timer = 0 as ReturnType<typeof setInterval> | 0
+watch(
+  () => auth.loggedIn,
+  (on) => {
+    if (on && !timer) {
+      store.fetchStatus()
+      timer = setInterval(() => store.fetchStatus(), 5000)
+    } else if (!on && timer) {
+      clearInterval(timer)
+      timer = 0
+    }
+  },
+  { immediate: true },
+)
+
+function fmt(n: number): string {
+  return n.toLocaleString('de-DE')
+}
 </script>
 
 <template>
-  <header class="topbar">
-    <RouterLink to="/" class="brand">📄 Dokumente-OCR</RouterLink>
-    <span class="spacer" />
-    <template v-if="auth.loggedIn">
-      <span class="user">{{ auth.email }}</span>
-      <button @click="logout">Abmelden</button>
-    </template>
-  </header>
-  <main>
-    <RouterView />
-  </main>
+  <div class="shell">
+    <header class="topbar">
+      <button class="brand" title="Seite neu laden" @click="reload">
+        📄 Dokumente-OCR
+      </button>
+      <span class="spacer" />
+      <button v-if="auth.loggedIn" class="logout" @click="logout">
+        <MdiIcon :path="mdiLogout" /> Abmelden
+      </button>
+    </header>
+
+    <main>
+      <RouterView />
+    </main>
+
+    <footer class="footbar">
+      <template v-if="auth.loggedIn">
+        <span class="chip">
+          <MdiIcon :path="mdiAccount" :size="15" /> {{ auth.email }}
+        </span>
+        <span v-if="store.status?.processing.length" class="chip busy">
+          <span class="pulse" />
+          <MdiIcon :path="mdiFileDocumentOutline" :size="15" />
+          {{ store.status.processing.join(', ') }}
+          <template v-if="store.status.currentPages">
+            ({{ store.status.currentPages }} S.)
+          </template>
+        </span>
+        <span v-if="store.status?.pending" class="chip">
+          <MdiIcon :path="mdiTrayFull" :size="15" />
+          Warteschlange: {{ store.status.pending }}
+        </span>
+        <span v-if="store.status" class="chip">
+          <MdiIcon :path="mdiCounter" :size="15" />
+          {{ fmt(store.status.generatedTokens) }} erzeugt ·
+          {{ fmt(store.status.promptTokens) }} verarbeitet
+          <template v-if="store.tokensPerSecond">
+            · {{ store.tokensPerSecond }}/s
+          </template>
+        </span>
+      </template>
+      <span class="spacer" />
+      <span v-if="version" class="chip version">
+        <MdiIcon :path="mdiTagOutline" :size="15" /> v{{ version }}
+      </span>
+    </footer>
+  </div>
 </template>
 
 <style scoped>
-.topbar {
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.topbar,
+.footbar {
   display: flex;
   align-items: center;
-  padding: 0.6rem 1.2rem;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  flex-shrink: 0;
+}
+.topbar {
+  height: 3rem;
   border-bottom: 1px solid var(--border);
+}
+.footbar {
+  height: 2.6rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+  overflow: hidden;
 }
 .brand {
   font-weight: 700;
   color: var(--text-h);
-  text-decoration: none;
   font-size: 1.05rem;
+  background: none;
+  border: none;
+  padding: 0.2rem 0;
 }
 .spacer {
   flex: 1;
 }
-.user {
-  color: var(--text-dim);
-  font-size: 0.85rem;
-  margin-right: 0.6rem;
+.logout {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 main {
-  padding: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  padding: 0.15rem 0.7rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  max-width: 34rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chip.busy {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.chip.version {
+  font-variant-numeric: tabular-nums;
+}
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
 }
 </style>

@@ -1,18 +1,12 @@
 """Smoke-Test: App startet, Anmeldung funktioniert, Endpunkte geschützt.
 
 Voraussetzung: die Postgres aus docker-compose läuft (Port 5435).
+Umgebung (Test-DB, Test-User, kein Worker) kommt aus conftest.py.
 """
 
-import os
+from fastapi.testclient import TestClient
 
-os.environ.setdefault('AUTH_USERS', 'test@example.org:test-passwort')
-os.environ.setdefault('AUTH_SECRET', 'test-secret')
-# Kein Worker in Tests — er würde echte Dokumente aus der Queue claimen
-os.environ['WORKER_ENABLED'] = '0'
-
-from fastapi.testclient import TestClient  # noqa: E402
-
-from backend.app.main import app  # noqa: E402
+from backend.app.main import app
 
 
 def test_ohne_anmeldung_401():
@@ -45,3 +39,10 @@ def test_login_und_zugriff():
         assert isinstance(resp.json(), list)
 
         assert client.get('/api/auth/me').json()['email'] == 'test@example.org'
+
+
+def test_version_oeffentlich():
+    with TestClient(app) as client:
+        resp = client.get('/api/version')
+        assert resp.status_code == 200
+        assert resp.json()['version'].count('.') == 2

@@ -106,11 +106,17 @@ async def _vllm_counters() -> dict:
     """Lebenszeichen des Modells aus den vLLM-Prometheus-Metriken."""
     import httpx
 
-    counters = {'runningRequests': 0, 'waitingRequests': 0, 'generatedTokens': 0}
+    counters = {
+        'runningRequests': 0,
+        'waitingRequests': 0,
+        'generatedTokens': 0,
+        'promptTokens': 0,
+    }
     wanted = {
         'vllm:num_requests_running': 'runningRequests',
         'vllm:num_requests_waiting{': 'waitingRequests',
         'vllm:generation_tokens_total': 'generatedTokens',
+        'vllm:prompt_tokens_total': 'promptTokens',
     }
     try:
         async with httpx.AsyncClient() as client:
@@ -152,6 +158,16 @@ async def processing_status(user: UserDep, db: SessionDep):
         'modelUp': await ocr.is_model_up(),
         **await _vllm_counters(),
     }
+
+
+@app.get('/api/version')
+def version():
+    """Öffentlich: App-Version aus der VERSION-Datei (auch für commit.sh)."""
+    try:
+        v = (config.PROJECT_DIR / 'VERSION').read_text().strip()
+    except OSError:
+        v = '0.0.0'
+    return {'version': v}
 
 
 @app.get('/api/config')

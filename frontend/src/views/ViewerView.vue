@@ -77,7 +77,7 @@ onBeforeUnmount(() => {
 .viewer {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 3.2rem);
+  height: 100%;
   padding: 0.8rem 1.2rem;
   gap: 0.5rem;
 }

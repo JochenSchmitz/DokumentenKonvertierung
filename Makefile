@@ -12,6 +12,10 @@ quality:
 test:
 	$(PYTHON) -m pytest
 
+# Frontend: Typprüfung (vue-tsc) + Produktions-Build in einem Schritt.
+test-frontend:
+	cd frontend && npm run build
+
 format:
 	$(PYTHON) -m ruff format backend
 	$(PYTHON) -m ruff check --fix backend

@@ -36,6 +36,7 @@ export interface ProcessingStatus {
   runningRequests: number
   waitingRequests: number
   generatedTokens: number
+  promptTokens: number
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

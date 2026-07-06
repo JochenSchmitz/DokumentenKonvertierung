@@ -43,14 +43,13 @@ echo "Version: $current_version -> $next_version"
 echo "Running quality checks..."
 make quality
 
-echo "Running frontend unit tests..."
+echo "Running frontend type check & build..."
 make test-frontend
 
-echo "Running E2E tests..."
-if ! curl -sf http://127.0.0.1:8002/api/version >/dev/null 2>&1; then
-	fail "Backend is not running on port 8002. Start it with 'make backend' before committing."
+echo "Checking backend..."
+if ! curl -sf http://127.0.0.1:8020/api/version >/dev/null 2>&1; then
+	fail "Backend is not running on port 8020. Start it with 'make backend' before committing."
 fi
-make test-e2e
 
 git add -A
 
