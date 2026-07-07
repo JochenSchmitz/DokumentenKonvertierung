@@ -35,6 +35,11 @@ const doneDocs = computed(() =>
 function fmtDate(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString('de-DE') : '—'
 }
+
+/** Dateiname ohne Endung — angezeigt wird ohnehin nur die .docx. */
+function stem(name: string): string {
+  return name.replace(/\.[^.]+$/, '')
+}
 </script>
 
 <template>
@@ -86,7 +91,7 @@ function fmtDate(iso: string | null): string {
                 :to="{ name: 'editor', params: { id: doc.id } }"
                 class="doc-link"
                 title="In OnlyOffice öffnen und bearbeiten"
-              >{{ doc.filename }}</RouterLink>
+              >{{ stem(doc.filename) }}</RouterLink>
               <div v-if="doc.summary" class="summary">{{ doc.summary }}</div>
             </td>
             <td>{{ doc.page_count ?? '—' }}</td>

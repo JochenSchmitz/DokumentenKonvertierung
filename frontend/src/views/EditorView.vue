@@ -44,7 +44,7 @@ onBeforeUnmount(() => {
       <RouterLink :to="{ name: 'documents' }" class="back">
         <MdiIcon :path="mdiArrowLeft" :size="16" /> Übersicht
       </RouterLink>
-      <h2>{{ doc?.filename ?? '…' }}</h2>
+      <h2>{{ doc ? doc.filename.replace(/\.[^.]+$/, '') : '…' }}</h2>
       <span class="hint">Änderungen werden automatisch gespeichert</span>
       <span class="spacer" />
       <a v-if="doc" :href="`/api/documents/${doc.id}/file/docx`">
