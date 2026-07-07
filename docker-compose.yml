@@ -1,16 +1,9 @@
-# Drei Modelle, je ein Profil — es kann immer nur EINES laufen
-# (Gewichte 33-60 GB, dazu belegt der Ollama-Systemdienst ~22 GB):
-#   docker compose --profile base up -d       # Base-Modell    -> Port 8010
-#   docker compose --profile instruct up -d   # Instruct-Modell -> Port 8011
-#   docker compose --profile ocr up -d        # OCR/Vision      -> Port 8012
-#   docker compose --profile <name> down      # jeweils stoppen
+# OCR-Modell als Profil (Gewichte ~34 GB, das Laden dauert Minuten):
+#   docker compose --profile ocr up -d    # OCR/Vision -> Port 8012
+#   docker compose --profile ocr down     # stoppen
 #
 # Der pip-Fix behebt einen Bug im 26.06-Image: instrumentator 8.0.0
 # ist inkompatibel mit FastAPI 0.137 (alle Requests -> HTTP 500).
-# --tokenizer zeigt jeweils auf eine korrigierte tokenizer.json (erzeugt
-# von hf-home/fix_tokenizer.py): transformers 5.x registriert die
-# Whitespace-Tokens des Tilde-Tokenizers als Spezial-Tokens und
-# zerhackt damit jeden Prompt (Zeichenmüll zwischen Wörtern).
 x-vllm-common: &vllm-common
   image: nvcr.io/nvidia/vllm:26.06-py3
   restart: unless-stopped
@@ -56,44 +49,11 @@ services:
       timeout: 5s
       retries: 12
 
-  # TildeOpen-30b ist ein Base-Modell (kein Chat-Tuning):
-  # Testen über /v1/completions, nicht /v1/chat/completions.
-  # 64k Kontext wären möglich, aber 16k reichen zum Testen.
-  tildeopen:
-    <<: *vllm-common
-    container_name: tildeopen-vllm
-    profiles: ["base"]
-    ports:
-      - "8010:8000"   # Host-Port 8010, da 8000/8001 belegt sind
-    command: >
-      bash -c "pip install --no-cache-dir 'prometheus-fastapi-instrumentator>=8.0.2' &&
-      vllm serve TildeAI/TildeOpen-30b
-      --host 0.0.0.0
-      --port 8000
-      --max-model-len 16384
-      --gpu-memory-utilization 0.60
-      --tokenizer /hf-home/tilde-tokenizer-fixed"
-
-  # Community-Fine-Tune mit ChatML: normale Chat-Nutzung über
-  # /v1/chat/completions. Laut Autor mit 4096 Tokens Kontext trainiert.
-  tildeopen-instruct:
-    <<: *vllm-common
-    container_name: tildeopen-instruct-vllm
-    profiles: ["instruct"]
-    ports:
-      - "8011:8000"
-    command: >
-      bash -c "pip install --no-cache-dir 'prometheus-fastapi-instrumentator>=8.0.2' &&
-      vllm serve martinsu/tildeopen-30b-mu-instruct
-      --host 0.0.0.0
-      --port 8000
-      --max-model-len 4096
-      --gpu-memory-utilization 0.60
-      --tokenizer /hf-home/tilde-instruct-tokenizer-fixed"
-
   # Vision-Language-Modell für Dokument-OCR (gescannte Seiten -> Text).
   # Offizielle FP8-Quantisierung: nahezu verlustfrei, läuft nativ auf
   # Blackwell und lässt reichlich KV-Cache für hochaufgelöste Seiten.
+  # --gpu-memory-utilization 0.60 bewusst konservativ: der Ollama-
+  # Systemdienst belegt dauerhaft ~22 GB des Unified Memory.
   qwen-ocr:
     <<: *vllm-common
     container_name: qwen-ocr-vllm
