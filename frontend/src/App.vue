@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { RouterView, useRouter } from 'vue-router'
+import { RouterLink, RouterView, useRouter } from 'vue-router'
 import {
   mdiAccount,
   mdiCounter,
@@ -76,6 +76,10 @@ function fmt(n: number): string {
       <button class="brand" title="Seite neu laden" @click="reload">
         FDS — FES Dokumentenservice
       </button>
+      <nav v-if="auth.loggedIn" class="nav">
+        <RouterLink :to="{ name: 'documents' }">Dokumente</RouterLink>
+        <RouterLink :to="{ name: 'upload' }">Upload</RouterLink>
+      </nav>
       <span class="spacer" />
       <button v-if="auth.loggedIn" class="logout" @click="logout">
         <MdiIcon :path="mdiLogout" /> Abmelden
@@ -153,6 +157,27 @@ function fmt(n: number): string {
 .header-logo {
   height: 2.2rem;
   width: auto;
+}
+.nav {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-left: 1rem;
+}
+.nav a {
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+}
+.nav a:hover {
+  color: var(--text);
+  background: var(--bg-soft);
+}
+.nav a.router-link-active {
+  color: var(--accent);
+  background: var(--accent-bg);
+  font-weight: 600;
 }
 .splash {
   position: fixed;

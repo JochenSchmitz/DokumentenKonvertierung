@@ -218,8 +218,28 @@ async def frontend_config(user: UserDep):
     }
 
 
+class _SpaStaticFiles(StaticFiles):
+    """SPA-Fallback: unbekannte Pfade (z.B. /upload, /edit/<id>) liefern
+    index.html aus, damit Deep-Links und Browser-Reloads funktionieren —
+    das Routing übernimmt dann vue-router im Browser.
+
+    Starlette WIRFT bei fehlenden Dateien eine HTTPException(404)
+    (statt eine 404-Response zurückzugeben), daher try/except.
+    """
+
+    async def get_response(self, path: str, scope):
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response('index.html', scope)
+            raise
+
+
 # Gebautes Frontend (frontend/dist) direkt mit ausliefern, falls vorhanden
 if config.FRONTEND_DIST.is_dir():
     app.mount(
-        '/', StaticFiles(directory=config.FRONTEND_DIST, html=True), name='frontend'
+        '/', _SpaStaticFiles(directory=config.FRONTEND_DIST, html=True), name='frontend'
     )
