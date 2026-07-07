@@ -17,6 +17,43 @@ logging.basicConfig(
 )
 
 
+def _migrate(connection) -> None:
+    """Schema-Nachzügler: create_all ergänzt keine Spalten in
+    bestehenden Tabellen, daher hier idempotente ALTERs."""
+    from sqlalchemy import text
+
+    for ddl in (
+        'ALTER TABLE documents ADD COLUMN IF NOT EXISTS sha256 text',
+        'ALTER TABLE documents ADD COLUMN IF NOT EXISTS fixed_tags '
+        "text[] NOT NULL DEFAULT '{}'",
+        'CREATE INDEX IF NOT EXISTS ix_documents_sha256 ON documents (sha256)',
+    ):
+        connection.execute(text(ddl))
+    connection.commit()
+
+
+def _backfill_hashes() -> None:
+    """SHA-256 für Alt-Dokumente nachtragen (einmalig, idempotent)."""
+    from sqlalchemy import select
+
+    from .db import SessionLocal
+    from .models import Document
+    from .routers.documents import file_sha256
+
+    with SessionLocal() as db:
+        docs = db.scalars(select(Document).where(Document.sha256.is_(None))).all()
+        done = 0
+        for doc in docs:
+            path = config.ORIGINALS_DIR / doc.stored_name
+            if not path.exists():
+                continue
+            doc.sha256 = file_sha256(path)
+            done += 1
+        db.commit()
+    if done:
+        logging.getLogger('main').info('Hash-Backfill: %d Dokumente ergänzt', done)
+
+
 def _init_search(connection) -> None:
     """Trigram-Suche: Extension + GIN-Indizes für ILIKE '%...%'-Suchen."""
     from sqlalchemy import text
@@ -50,7 +87,9 @@ async def lifespan(app: FastAPI):
     config.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
     with engine.connect() as connection:
+        _migrate(connection)
         _init_search(connection)
+    await asyncio.to_thread(_backfill_hashes)
     # WORKER_ENABLED=0 z.B. in Tests: dort darf kein Worker gegen die
     # echte Datenbank laufen (er würde Dokumente aus der Queue claimen
     # und beim Testende verwaiste processing-Flags hinterlassen).

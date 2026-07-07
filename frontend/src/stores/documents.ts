@@ -4,6 +4,7 @@ import {
   type AppConfig,
   type DocumentOut,
   type ProcessingStatus,
+  type UploadSkipped,
 } from '../api'
 
 export const useDocumentsStore = defineStore('documents', {
@@ -16,6 +17,8 @@ export const useDocumentsStore = defineStore('documents', {
     selectedTags: [] as string[],
     loading: false,
     uploading: false,
+    // Beim letzten Upload abgelehnte Dateien (Duplikate, falscher Typ)
+    skippedUploads: [] as UploadSkipped[],
     error: '' as string,
     config: null as AppConfig | null,
     pollTimer: 0 as ReturnType<typeof setInterval> | 0,
@@ -78,7 +81,8 @@ export const useDocumentsStore = defineStore('documents', {
       if (!files.length) return
       this.uploading = true
       try {
-        await api.upload(files)
+        const result = await api.upload(files)
+        this.skippedUploads = result.skipped
         this.error = ''
         await this.fetch()
         this.ensurePolling()

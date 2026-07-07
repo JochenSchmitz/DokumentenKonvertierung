@@ -29,13 +29,15 @@ async def _chat(
     return resp.json()['choices'][0]['message']['content']
 
 
-async def ocr_page(client: httpx.AsyncClient, png_bytes: bytes) -> str:
+async def ocr_page(
+    client: httpx.AsyncClient, png_bytes: bytes, prompt: str | None = None
+) -> str:
     b64 = base64.b64encode(png_bytes).decode()
     return await _chat(
         client,
         [
             {'type': 'image_url', 'image_url': {'url': f'data:image/png;base64,{b64}'}},
-            {'type': 'text', 'text': config.OCR_PROMPT},
+            {'type': 'text', 'text': prompt or config.OCR_PROMPT},
         ],
     )
 

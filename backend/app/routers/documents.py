@@ -1,7 +1,9 @@
-import shutil
+import asyncio
+import hashlib
 import uuid
-from pathlib import Path
-from typing import Annotated
+import zipfile
+from pathlib import Path, PurePosixPath
+from typing import Annotated, BinaryIO
 
 from fastapi import APIRouter, Cookie, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -11,11 +13,22 @@ from sqlalchemy.orm import Session, selectinload
 from .. import auth, config
 from ..db import SessionDep
 from ..models import DocStatus, Document, Page
-from ..schemas import DocumentDetail, DocumentOut
+from ..schemas import DocumentDetail, DocumentOut, UploadResult, UploadSkipped
 
 router = APIRouter(prefix='/api/documents', tags=['documents'])
 
-ALLOWED_SUFFIXES = {'.pdf', '.png', '.jpg', '.jpeg', '.tif', '.tiff'}
+ALLOWED_SUFFIXES = {
+    '.pdf',
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.tif',
+    '.tiff',
+    '.msg',
+    '.doc',
+    '.docx',
+    '.zip',
+}
 MIME_BY_SUFFIX = {
     '.pdf': 'application/pdf',
     '.png': 'image/png',
@@ -23,37 +36,194 @@ MIME_BY_SUFFIX = {
     '.jpeg': 'image/jpeg',
     '.tif': 'image/tiff',
     '.tiff': 'image/tiff',
+    '.msg': 'application/vnd.ms-outlook',
+    '.doc': 'application/msword',
+    '.docx': (
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ),
 }
+IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.tif', '.tiff'}
 
 
-@router.post('', response_model=list[DocumentOut])
-async def upload(files: list[UploadFile], db: SessionDep, user: auth.UserDep):
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open('rb') as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _ingest(
+    db: Session,
+    filename: str,
+    suffix: str,
+    stream: BinaryIO,
+    fixed_tags: list[str],
+    seen: set[str],
+) -> tuple[Document | None, str | None]:
+    """Eine Datei speichern — liefert (Dokument, None) oder (None, Grund).
+
+    Der SHA-256 wird beim Wegschreiben mitgerechnet; Duplikate (gegen die
+    Datenbank UND innerhalb desselben Uploads) werden abgelehnt und die
+    gerade geschriebene Datei wieder entfernt.
+    """
+    doc_id = uuid.uuid7()
+    stored = f'{doc_id}{suffix}'
+    target = config.ORIGINALS_DIR / stored
+    h = hashlib.sha256()
+    with target.open('wb') as out:
+        while chunk := stream.read(1 << 20):
+            h.update(chunk)
+            out.write(chunk)
+    sha = h.hexdigest()
+
+    if sha in seen:
+        target.unlink()
+        return None, 'mehrfach im selben Upload enthalten'
+    existing = db.scalars(
+        select(Document).where(Document.sha256 == sha).limit(1)
+    ).first()
+    if existing is not None:
+        target.unlink()
+        return None, f'bereits vorhanden als „{existing.filename}“'
+    seen.add(sha)
+
+    # Seitenzahl schon beim Upload, damit die Warteschlange sie
+    # anzeigen kann; bei kaputtem PDF bleibt sie leer, der Worker
+    # meldet den Fehler dann bei der Verarbeitung.
+    page_count = None
+    if suffix == '.pdf':
+        from ..worker import pdf_page_count
+
+        try:
+            page_count = pdf_page_count(target)
+        except Exception:  # noqa: BLE001
+            page_count = None
+    elif suffix in IMAGE_SUFFIXES:
+        page_count = 1  # Bilder liest der Worker als genau eine Seite
+
+    doc = Document(
+        id=doc_id,
+        filename=filename,
+        stored_name=stored,
+        mime=MIME_BY_SUFFIX[suffix],
+        size_bytes=target.stat().st_size,
+        sha256=sha,
+        status=DocStatus.pending,
+        page_count=page_count,
+        tags=list(fixed_tags),  # Ordner-Tags sofort sichtbar
+        fixed_tags=list(fixed_tags),
+    )
+    db.add(doc)
+    return doc, None
+
+
+def _fix_zip_name(info: zipfile.ZipInfo) -> str:
+    """Umlaute in ZIP-Namen reparieren.
+
+    Ohne UTF-8-Flag dekodiert zipfile die Namen als cp437; Windows-
+    Archive sind aber meist UTF-8 oder cp850 ("Prüfbericht" statt
+    "Pr³fbericht").
+    """
+    if info.flag_bits & 0x800:
+        return info.filename
+    raw = info.filename.encode('cp437')
+    for enc in ('utf-8', 'cp850'):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return info.filename
+
+
+def _ingest_zip(
+    db: Session, zip_name: str, stream: BinaryIO, seen: set[str]
+) -> tuple[list[Document], list[UploadSkipped]]:
+    """ZIP entpacken: jede Datei wird ein eigenes Dokument, die
+    Ordnerstruktur im Archiv wird zu festen Schlagworten."""
     created: list[Document] = []
+    skipped: list[UploadSkipped] = []
+    try:
+        archive = zipfile.ZipFile(stream)
+    except zipfile.BadZipFile:
+        return [], [UploadSkipped(filename=zip_name, reason='kein gültiges ZIP-Archiv')]
+    with archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            path = PurePosixPath(_fix_zip_name(info).replace('\\', '/'))
+            # macOS-Metadaten im Archiv sind keine Dokumente
+            if (
+                '__MACOSX' in path.parts
+                or path.name.startswith('._')
+                or path.name == '.DS_Store'
+            ):
+                continue
+            suffix = path.suffix.lower()
+            if suffix == '.zip':
+                skipped.append(
+                    UploadSkipped(
+                        filename=str(path),
+                        reason='ZIP im ZIP wird nicht unterstützt',
+                    )
+                )
+                continue
+            if suffix not in ALLOWED_SUFFIXES:
+                skipped.append(
+                    UploadSkipped(
+                        filename=str(path),
+                        reason=f'Dateityp {suffix or "(ohne Endung)"} '
+                        'wird nicht unterstützt',
+                    )
+                )
+                continue
+            folder_tags = [p.strip() for p in path.parts[:-1] if p.strip()]
+            with archive.open(info) as member:
+                doc, reason = _ingest(db, path.name, suffix, member, folder_tags, seen)
+            if doc is not None:
+                created.append(doc)
+            else:
+                skipped.append(UploadSkipped(filename=str(path), reason=reason or ''))
+    return created, skipped
+
+
+@router.post('', response_model=UploadResult)
+async def upload(files: list[UploadFile], db: SessionDep, user: auth.UserDep):
+    """Dateien annehmen; ZIPs werden entpackt, Duplikate (gleicher
+    Inhalt, per SHA-256) mit kurzem Hinweis abgelehnt statt gespeichert."""
+    created: list[Document] = []
+    skipped: list[UploadSkipped] = []
+    seen: set[str] = set()
     for f in files:
-        suffix = Path(f.filename or 'datei').suffix.lower()
+        name = f.filename or 'datei'
+        suffix = Path(name).suffix.lower()
         if suffix not in ALLOWED_SUFFIXES:
-            raise HTTPException(
-                415,
-                f'Dateityp {suffix or "(ohne Endung)"} wird nicht '
-                f'unterstützt: {f.filename}',
+            skipped.append(
+                UploadSkipped(
+                    filename=name,
+                    reason=f'Dateityp {suffix or "(ohne Endung)"} '
+                    'wird nicht unterstützt',
+                )
             )
-        doc_id = uuid.uuid7()
-        stored = f'{doc_id}{suffix}'
-        target = config.ORIGINALS_DIR / stored
-        with target.open('wb') as out:
-            shutil.copyfileobj(f.file, out)
-        doc = Document(
-            id=doc_id,
-            filename=f.filename or stored,
-            stored_name=stored,
-            mime=MIME_BY_SUFFIX[suffix],
-            size_bytes=target.stat().st_size,
-            status=DocStatus.pending,
-        )
-        db.add(doc)
-        created.append(doc)
+            continue
+        if suffix == '.zip':
+            zip_created, zip_skipped = await asyncio.to_thread(
+                _ingest_zip, db, name, f.file, seen
+            )
+            created.extend(zip_created)
+            skipped.extend(zip_skipped)
+        else:
+            doc, reason = await asyncio.to_thread(
+                _ingest, db, name, suffix, f.file, [], seen
+            )
+            if doc is not None:
+                created.append(doc)
+            else:
+                skipped.append(UploadSkipped(filename=name, reason=reason or ''))
     db.commit()
-    return created
+    return UploadResult(
+        created=[DocumentOut.model_validate(d) for d in created], skipped=skipped
+    )
 
 
 @router.get('', response_model=list[DocumentOut])

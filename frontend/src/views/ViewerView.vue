@@ -9,7 +9,9 @@ const store = useDocumentsStore()
 
 const doc = ref<DocumentDetail | null>(null)
 const error = ref('')
-const isImage = ref(false)
+// Was zeigt die linke Spalte? PDF -> OnlyOffice-Viewer, Bild -> <img>,
+// alles andere (z.B. .msg/.doc/.docx) -> nur Download-Hinweis
+const originalKind = ref<'pdf' | 'image' | 'none'>('none')
 let editors: { destroyEditor: () => void }[] = []
 
 onMounted(async () => {
@@ -19,12 +21,15 @@ onMounted(async () => {
       api.get(props.id),
     ])
     doc.value = detail
-    isImage.value = !detail.mime.startsWith('application/pdf')
+    originalKind.value = detail.mime.startsWith('application/pdf')
+      ? 'pdf'
+      : detail.mime.startsWith('image/')
+        ? 'image'
+        : 'none'
 
     await loadDocsApi(config.onlyofficeUrl)
-    const sides: Array<'original' | 'result'> = isImage.value
-      ? ['result']
-      : ['original', 'result']
+    const sides: Array<'original' | 'result'> =
+      originalKind.value === 'pdf' ? ['original', 'result'] : ['result']
     for (const side of sides) {
       const viewerConfig = await api.onlyofficeConfig(props.id, side)
       // Original: reiner PDF-Viewer ohne Bedienelemente (embedded);
@@ -53,7 +58,12 @@ onBeforeUnmount(() => {
     <div class="head">
       <h2>{{ doc?.filename ?? '…' }}</h2>
       <div v-if="doc" class="meta">
-        <span v-for="tag in doc.tags" :key="tag" class="tag">{{ tag }}</span>
+        <span
+          v-for="tag in doc.tags"
+          :key="tag"
+          class="tag"
+          :class="{ unreadable: tag === 'Unlesbar' }"
+        >{{ tag }}</span>
       </div>
       <a v-if="doc" :href="`/api/documents/${doc.id}/file/docx`">
         <button class="primary">.docx herunterladen</button>
@@ -66,11 +76,16 @@ onBeforeUnmount(() => {
       <section class="pane">
         <header>Original</header>
         <img
-          v-if="isImage && doc"
+          v-if="originalKind === 'image' && doc"
           :src="`/api/documents/${doc.id}/file/original`"
           :alt="doc.filename"
           class="original-image"
         />
+        <p v-else-if="originalKind === 'none' && doc" class="no-preview">
+          Für diesen Dateityp gibt es keine Vorschau —
+          <a :href="`/api/documents/${doc.id}/file/original`">Original
+          herunterladen</a>
+        </p>
         <div v-else id="oo-original" class="oo-host"></div>
       </section>
       <section class="pane">
@@ -140,11 +155,20 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
 }
+.tag.unreadable {
+  background: rgba(220, 38, 38, 0.12);
+  color: var(--err);
+}
 .original-image {
   flex: 1;
   object-fit: contain;
   min-height: 0;
   background: var(--bg-soft);
+}
+.no-preview {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 2rem 1rem;
 }
 .error {
   color: var(--err);

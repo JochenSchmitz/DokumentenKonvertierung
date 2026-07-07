@@ -13,6 +13,16 @@ export interface DocumentOut {
   processed_at: string | null
 }
 
+export interface UploadSkipped {
+  filename: string
+  reason: string
+}
+
+export interface UploadResult {
+  created: DocumentOut[]
+  skipped: UploadSkipped[]
+}
+
 export interface PageOut {
   page_no: number
   content_md: string
@@ -68,7 +78,7 @@ export const api = {
   upload: (files: File[]) => {
     const body = new FormData()
     files.forEach((f) => body.append('files', f))
-    return request<DocumentOut[]>('/api/documents', { method: 'POST', body })
+    return request<UploadResult>('/api/documents', { method: 'POST', body })
   },
   remove: (id: string) =>
     request<void>(`/api/documents/${id}`, { method: 'DELETE' }),

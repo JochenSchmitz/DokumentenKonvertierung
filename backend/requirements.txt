@@ -6,3 +6,4 @@ python-multipart
 pyjwt
 httpx
 pypandoc-binary
+extract-msg

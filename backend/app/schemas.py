@@ -21,6 +21,18 @@ class DocumentOut(BaseModel):
     processed_at: datetime.datetime | None
 
 
+class UploadSkipped(BaseModel):
+    """Beim Upload abgelehnte Datei samt kurzem Grund (z.B. Duplikat)."""
+
+    filename: str
+    reason: str
+
+
+class UploadResult(BaseModel):
+    created: list[DocumentOut]
+    skipped: list[UploadSkipped]
+
+
 class PageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

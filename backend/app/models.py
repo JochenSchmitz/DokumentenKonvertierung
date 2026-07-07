@@ -34,12 +34,19 @@ class Document(Base):
     result_stem: Mapped[str | None] = mapped_column(Text)  # Basisname in ergebnisse/
     mime: Mapped[str] = mapped_column(Text)
     size_bytes: Mapped[int] = mapped_column(Integer)
+    # SHA-256 des Originals — erkennt erneute Uploads derselben Datei
+    sha256: Mapped[str | None] = mapped_column(Text, index=True)
     status: Mapped[DocStatus] = mapped_column(
         Enum(DocStatus, name='doc_status'), default=DocStatus.pending
     )
     error: Mapped[str | None] = mapped_column(Text)
     page_count: Mapped[int | None] = mapped_column(Integer)
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    # Feste Tags (z.B. Ordnerpfad aus einem ZIP-Upload): bleiben bei
+    # jeder (Neu-)Verarbeitung erhalten, das Modell ergänzt nur weitere.
+    fixed_tags: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), default=list, server_default='{}'
+    )
     summary: Mapped[str | None] = mapped_column(Text)
     doc_date: Mapped[datetime.date | None] = mapped_column(Date)
     uploaded_at: Mapped[datetime.datetime] = mapped_column(

@@ -31,13 +31,14 @@ function onDrop(e: DragEvent) {
       ref="fileInput"
       type="file"
       multiple
-      accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff"
+      accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.msg,.doc,.docx,.zip"
       hidden
       @change="onFiles(($event.target as HTMLInputElement).files)"
     />
     <template v-if="store.uploading">⏳ Lade hoch …</template>
     <template v-else>
-      📤 Dokumente hierher ziehen oder klicken (PDF, PNG, JPG, TIFF — mehrere möglich)
+      📤 Dokumente hierher ziehen oder klicken (PDF, Bilder, Word,
+      Outlook-.msg, ZIP — mehrere möglich)
     </template>
   </div>
 </template>

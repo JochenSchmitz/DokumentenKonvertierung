@@ -65,6 +65,24 @@ OCR_PROMPT = (
     '- Text, der keine Tabelle ist, nicht in Tabellen pressen.'
 )
 
+# Für hochgeladene Bilddateien: gescannte/fotografierte Dokumente werden
+# wie gehabt als Text extrahiert, "richtige" Fotos dagegen so genau wie
+# möglich beschrieben.
+IMAGE_PROMPT = (
+    'Du siehst eine hochgeladene Bilddatei.\n'
+    'Fall 1 — die Datei zeigt eine gescannte oder abfotografierte '
+    'Dokumentseite: ' + OCR_PROMPT + '\n'
+    'Fall 2 — die Datei ist ein richtiges Foto oder Bild ohne '
+    'Dokumentcharakter: Beschreibe das Bild auf Deutsch so genau und '
+    'detailliert wie möglich als Markdown. Beginne mit einer kurzen '
+    'Überschrift, dann eine ausführliche Beschreibung: Was ist zu sehen '
+    '(Personen, Objekte, Gebäude, Fahrzeuge, Umgebung), räumliche '
+    'Anordnung, Farben, Lichtverhältnisse, erkennbarer Text (Schilder, '
+    'Aufschriften, Kennzeichen), Zustand/Auffälligkeiten sowie Hinweise '
+    'auf Ort, Zeit oder Anlass der Aufnahme. Spekulationen als solche '
+    'kennzeichnen.'
+)
+
 METADATA_PROMPT = (
     'Du bekommst den extrahierten Text eines gescannten Dokuments. '
     'Erstelle Metadaten dafür und antworte AUSSCHLIESSLICH mit einem '

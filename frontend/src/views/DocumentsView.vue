@@ -104,6 +104,19 @@ onUnmounted(() => {
     <div class="col-left" :style="{ width: leftPct + '%' }">
       <section class="tile">
         <UploadZone />
+        <div v-if="store.skippedUploads.length" class="notice">
+          <button
+            class="notice-close"
+            title="Hinweis schließen"
+            @click="store.skippedUploads = []"
+          ><MdiIcon :path="mdiClose" :size="14" /></button>
+          <strong>Nicht übernommen:</strong>
+          <ul>
+            <li v-for="s in store.skippedUploads" :key="s.filename + s.reason">
+              {{ s.filename }} — {{ s.reason }}
+            </li>
+          </ul>
+        </div>
       </section>
 
       <section class="tile grow">
@@ -114,6 +127,9 @@ onUnmounted(() => {
             <li v-for="doc in queueDocs" :key="doc.id">
               <span class="status">{{ statusLabel[doc.status] }}</span>
               <span class="name" :title="doc.filename">{{ doc.filename }}</span>
+              <span class="meta">
+                <template v-if="doc.page_count != null">{{ doc.page_count }}&nbsp;{{ doc.page_count === 1 ? 'Seite' : 'Seiten' }} · </template>{{ fmtSize(doc.size_bytes) }}
+              </span>
               <span class="q-actions">
                 <button
                   v-if="doc.status === 'error'"
@@ -156,6 +172,7 @@ onUnmounted(() => {
             v-for="tag in store.selectedTags"
             :key="tag"
             class="tag active"
+            :class="{ unreadable: tag === 'Unlesbar' }"
             title="Filter entfernen"
             @click="store.toggleTag(tag)"
           >
@@ -194,7 +211,10 @@ onUnmounted(() => {
                   v-for="tag in doc.tags"
                   :key="tag"
                   class="tag"
-                  :class="{ active: store.selectedTags.includes(tag) }"
+                  :class="{
+                    active: store.selectedTags.includes(tag),
+                    unreadable: tag === 'Unlesbar',
+                  }"
                   :title="store.selectedTags.includes(tag)
                     ? 'Filter entfernen'
                     : 'Nach diesem Schlagwort filtern'"
@@ -333,6 +353,12 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.queue .meta {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
 .q-actions {
   display: inline-flex;
   gap: 0.25rem;
@@ -387,6 +413,36 @@ td {
 .tag.active {
   background: var(--accent);
   color: #fff;
+}
+/* "Unlesbar" fällt als Warnung auf: rot statt Akzentfarbe */
+.tag.unreadable {
+  background: rgba(220, 38, 38, 0.12);
+  color: var(--err);
+}
+.tag.unreadable:hover {
+  border-color: var(--err);
+}
+.tag.unreadable.active {
+  background: var(--err);
+  color: #fff;
+}
+.notice {
+  position: relative;
+  margin: 0.6rem 0.8rem 0.8rem;
+  padding: 0.5rem 2rem 0.5rem 0.7rem;
+  border: 1px solid rgba(217, 119, 6, 0.5);
+  border-radius: 8px;
+  background: rgba(217, 119, 6, 0.08);
+  font-size: 0.85rem;
+}
+.notice ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.2rem;
+}
+.notice-close {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
 }
 .tag-filter {
   display: inline-flex;
