@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { RouterView, useRoute, useRouter } from 'vue-router'
 import {
   mdiAccount,
   mdiCounter,
+  mdiFileDocumentMultipleOutline,
   mdiFileDocumentOutline,
   mdiLogout,
   mdiTagOutline,
+  mdiTrayArrowUp,
   mdiTrayFull,
 } from '@mdi/js'
 import MdiIcon from './components/MdiIcon.vue'
@@ -16,6 +18,7 @@ import { useDocumentsStore } from './stores/documents'
 const auth = useAuthStore()
 const store = useDocumentsStore()
 const router = useRouter()
+const route = useRoute()
 const version = ref('')
 
 // Splashscreen: beim App-Start 3 s das Logo zeigen, dann ausblenden
@@ -76,14 +79,26 @@ function fmt(n: number): string {
       <button class="brand" title="Seite neu laden" @click="reload">
         FDS — FES Dokumentenservice
       </button>
-      <nav v-if="auth.loggedIn" class="nav">
-        <RouterLink :to="{ name: 'documents' }">Dokumente</RouterLink>
-        <RouterLink :to="{ name: 'upload' }">Upload</RouterLink>
-      </nav>
       <span class="spacer" />
-      <button v-if="auth.loggedIn" class="logout" @click="logout">
-        <MdiIcon :path="mdiLogout" /> Abmelden
-      </button>
+      <template v-if="auth.loggedIn">
+        <button
+          class="navbtn"
+          :class="{ active: route.name === 'documents' }"
+          @click="router.push({ name: 'documents' })"
+        >
+          <MdiIcon :path="mdiFileDocumentMultipleOutline" /> Dokumente
+        </button>
+        <button
+          class="navbtn"
+          :class="{ active: route.name === 'upload' }"
+          @click="router.push({ name: 'upload' })"
+        >
+          <MdiIcon :path="mdiTrayArrowUp" /> Upload
+        </button>
+        <button class="logout" @click="logout">
+          <MdiIcon :path="mdiLogout" /> Abmelden
+        </button>
+      </template>
     </header>
 
     <main>
@@ -158,26 +173,15 @@ function fmt(n: number): string {
   height: 2.2rem;
   width: auto;
 }
-.nav {
+.navbtn {
   display: inline-flex;
-  gap: 0.25rem;
-  margin-left: 1rem;
+  align-items: center;
+  gap: 0.35rem;
 }
-.nav a {
-  color: var(--text-dim);
-  text-decoration: none;
-  padding: 0.25rem 0.7rem;
-  border-radius: 999px;
-  font-size: 0.9rem;
-}
-.nav a:hover {
-  color: var(--text);
-  background: var(--bg-soft);
-}
-.nav a.router-link-active {
+.navbtn.active {
   color: var(--accent);
+  border-color: var(--accent);
   background: var(--accent-bg);
-  font-weight: 600;
 }
 .splash {
   position: fixed;
