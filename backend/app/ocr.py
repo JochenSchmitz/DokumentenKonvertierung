@@ -94,6 +94,85 @@ async def extract_metadata(client: httpx.AsyncClient, full_text: str) -> dict:
     return meta
 
 
+_ROLE_MAP = {
+    'absender': 'sender', 'sender': 'sender', 'von': 'sender',
+    'empfaenger': 'recipient', 'empfänger': 'recipient',
+    'recipient': 'recipient', 'an': 'recipient',
+    'erwaehnt': 'mentioned', 'erwähnt': 'mentioned', 'mentioned': 'mentioned',
+}  # fmt: skip
+_KIND_MAP = {
+    'person': 'person',
+    'firma': 'organization', 'organization': 'organization',
+    'organisation': 'organization', 'unternehmen': 'organization',
+}  # fmt: skip
+
+
+async def extract_entities(client: httpx.AsyncClient, full_text: str) -> list[dict]:
+    """Genannte Personen/Firmen mit Kontaktdaten aus dem Text ziehen.
+
+    Best effort: das Modell liefert ein JSON-Array; nicht Parsebares oder
+    komplett leere Einträge werden verworfen. Rollen-/Art-Strings werden
+    auf die DB-Enums abgebildet (unbekannt -> 'mentioned' bzw. kind=None).
+    Wie bei den Metadaten wird der Text bei zu langem Kontext gekürzt.
+    """
+    raw = ''
+    for cap in (40000, 15000, 4000):
+        try:
+            raw = await _chat(
+                client, config.ENTITY_PROMPT + full_text[:cap], max_tokens=2000
+            )
+            break
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 400 and cap > 4000:
+                log.warning(
+                    'Entitäten-Prompt zu lang (%d Zeichen) — kürze und erneut', cap
+                )
+                continue
+            raise
+    match = re.search(r'\[.*\]', raw, re.DOTALL)
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group())
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+
+    out: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        def field(key: str, src: dict = item) -> str | None:
+            val = src.get(key)
+            text = str(val).strip() if val is not None else ''
+            return text or None
+
+        name = field('name')
+        company = field('company')
+        address = field('address')
+        phone = field('phone')
+        email = field('email')
+        # Einträge ohne jede Angabe sind wertlos
+        if not any((name, company, address, phone, email)):
+            continue
+        role = _ROLE_MAP.get(str(item.get('role', '')).strip().lower(), 'mentioned')
+        kind = _KIND_MAP.get(str(item.get('kind', '')).strip().lower())
+        out.append(
+            {
+                'role': role,
+                'kind': kind,
+                'name': name,
+                'company': company,
+                'address': address,
+                'phone': phone,
+                'email': email,
+            }
+        )
+    return out
+
+
 async def is_model_up() -> bool:
     try:
         async with httpx.AsyncClient() as client:

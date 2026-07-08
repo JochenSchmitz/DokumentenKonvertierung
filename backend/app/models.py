@@ -25,6 +25,19 @@ class DocStatus(enum.StrEnum):
     error = 'error'
 
 
+class EntityRole(enum.StrEnum):
+    """Rolle einer Person/Firma im Dokument."""
+
+    sender = 'sender'  # Absender (Briefkopf, Unterschrift)
+    recipient = 'recipient'  # Empfänger (Adressfeld)
+    mentioned = 'mentioned'  # nur erwähnt
+
+
+class EntityKind(enum.StrEnum):
+    person = 'person'
+    organization = 'organization'  # Firma
+
+
 class Document(Base):
     __tablename__ = 'documents'
 
@@ -55,9 +68,20 @@ class Document(Base):
     processed_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # Wann wurde die Entitäten-Extraktion zuletzt versucht? NULL = noch nie
+    # (Kandidat für den Nachlauf-Backfill). Wird auch gesetzt, wenn niemand
+    # gefunden wurde, damit derselbe Kandidat nicht endlos erneut läuft.
+    entities_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     pages: Mapped[list[Page]] = relationship(
         back_populates='document', cascade='all, delete-orphan', order_by='Page.page_no'
+    )
+    entities: Mapped[list[DocumentEntity]] = relationship(
+        back_populates='document',
+        cascade='all, delete-orphan',
+        order_by='DocumentEntity.position',
     )
 
 
@@ -73,3 +97,32 @@ class Page(Base):
     content_md: Mapped[str] = mapped_column(Text)
 
     document: Mapped[Document] = relationship(back_populates='pages')
+
+
+class DocumentEntity(Base):
+    """Im Dokument genannte Person oder Firma samt Kontaktdaten.
+
+    Vom Vision-/Sprachmodell aus dem Volltext extrahiert; das Ergebnis
+    ist eine Best-effort-Näherung, kein Anspruch auf Vollständigkeit.
+    """
+
+    __tablename__ = 'document_entities'
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey('documents.id', ondelete='CASCADE'), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)  # Anzeigereihenfolge
+    role: Mapped[EntityRole] = mapped_column(
+        Enum(EntityRole, name='entity_role'), default=EntityRole.mentioned
+    )
+    kind: Mapped[EntityKind | None] = mapped_column(
+        Enum(EntityKind, name='entity_kind')
+    )
+    name: Mapped[str | None] = mapped_column(Text)
+    company: Mapped[str | None] = mapped_column(Text)  # Firma
+    address: Mapped[str | None] = mapped_column(Text)  # Anschrift
+    phone: Mapped[str | None] = mapped_column(Text)
+    email: Mapped[str | None] = mapped_column(Text)
+
+    document: Mapped[Document] = relationship(back_populates='entities')

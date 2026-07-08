@@ -26,6 +26,7 @@ def _migrate(connection) -> None:
         'ALTER TABLE documents ADD COLUMN IF NOT EXISTS sha256 text',
         'ALTER TABLE documents ADD COLUMN IF NOT EXISTS fixed_tags '
         "text[] NOT NULL DEFAULT '{}'",
+        'ALTER TABLE documents ADD COLUMN IF NOT EXISTS entities_at timestamptz',
         'CREATE INDEX IF NOT EXISTS ix_documents_sha256 ON documents (sha256)',
     ):
         connection.execute(text(ddl))

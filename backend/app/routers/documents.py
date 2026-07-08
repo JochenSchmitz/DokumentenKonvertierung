@@ -419,7 +419,9 @@ def list_documents(db: SessionDep, user: auth.UserDep, q: str = '', tags: str = 
 def _get_document(doc_id: uuid.UUID, db: Session, with_pages: bool = False) -> Document:
     stmt = select(Document).where(Document.id == doc_id)
     if with_pages:
-        stmt = stmt.options(selectinload(Document.pages))
+        stmt = stmt.options(
+            selectinload(Document.pages), selectinload(Document.entities)
+        )
     doc = db.scalars(stmt).first()
     if doc is None:
         raise HTTPException(404, 'Dokument nicht gefunden')
@@ -462,6 +464,9 @@ def reprocess(doc_id: uuid.UUID, db: SessionDep, user: auth.UserDep):
     if doc.status == DocStatus.processing:
         raise HTTPException(409, 'Dokument wird gerade verarbeitet')
     doc.pages = []
+    # Abgeleitete Beteiligte verwerfen; die Neuverarbeitung erzeugt sie neu.
+    doc.entities = []
+    doc.entities_at = None
     doc.status = DocStatus.pending
     doc.error = None
     db.commit()

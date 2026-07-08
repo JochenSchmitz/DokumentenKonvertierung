@@ -46,5 +46,18 @@ class PageOut(BaseModel):
     content_md: str
 
 
+class DocumentEntityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    role: str
+    kind: str | None
+    name: str | None
+    company: str | None
+    address: str | None
+    phone: str | None
+    email: str | None
+
+
 class DocumentDetail(DocumentOut):
     pages: list[PageOut]
+    entities: list[DocumentEntityOut]

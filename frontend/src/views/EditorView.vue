@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
+  mdiAccountMultipleOutline,
   mdiArrowLeft,
   mdiClose,
   mdiDownload,
@@ -9,7 +10,7 @@ import {
   mdiTagOutline,
 } from '@mdi/js'
 import MdiIcon from '../components/MdiIcon.vue'
-import { api, type DocumentDetail } from '../api'
+import { api, type DocumentDetail, type DocumentEntity } from '../api'
 import { useDocumentsStore } from '../stores/documents'
 import { createViewer, loadDocsApi } from '../onlyoffice'
 import { fmtDate, fmtDateTime, stem } from '../docsort'
@@ -80,6 +81,12 @@ function addTag() {
   saveTags([...doc.value.tags, tag])
 }
 
+const ROLE_LABEL: Record<DocumentEntity['role'], string> = {
+  sender: 'Absender',
+  recipient: 'Empfänger',
+  mentioned: 'Erwähnt',
+}
+
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   const kb = bytes / 1024
@@ -145,6 +152,24 @@ onBeforeUnmount(() => {
           <section v-if="doc.summary" class="block">
             <h3>Zusammenfassung</h3>
             <p class="summary">{{ doc.summary }}</p>
+          </section>
+
+          <section v-if="doc.entities.length" class="block">
+            <h3>
+              <MdiIcon :path="mdiAccountMultipleOutline" :size="15" /> Beteiligte
+            </h3>
+            <ul class="entities">
+              <li v-for="(e, i) in doc.entities" :key="i" class="entity">
+                <span class="role" :class="e.role">{{ ROLE_LABEL[e.role] }}</span>
+                <div class="who">
+                  <span v-if="e.name" class="name">{{ e.name }}</span>
+                  <span v-if="e.company" class="company">{{ e.company }}</span>
+                  <span v-if="e.address" class="addr">{{ e.address }}</span>
+                  <a v-if="e.phone" :href="`tel:${e.phone}`">{{ e.phone }}</a>
+                  <a v-if="e.email" :href="`mailto:${e.email}`">{{ e.email }}</a>
+                </div>
+              </li>
+            </ul>
           </section>
 
           <section class="block">
@@ -285,6 +310,62 @@ onBeforeUnmount(() => {
   font-size: 0.85rem;
   color: var(--text-dim);
   line-height: 1.4;
+}
+.entities {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.entity {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.role {
+  flex-shrink: 0;
+  align-self: flex-start;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.role.sender {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: transparent;
+}
+.role.recipient {
+  background: rgba(22, 163, 74, 0.12);
+  color: var(--ok);
+  border-color: transparent;
+}
+.who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 0.05rem;
+}
+.who .name {
+  font-weight: 600;
+  color: var(--text-h);
+}
+.who .company,
+.who .addr {
+  color: var(--text-dim);
+}
+.who a {
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-all;
+}
+.who a:hover {
+  text-decoration: underline;
 }
 .tags {
   display: flex;

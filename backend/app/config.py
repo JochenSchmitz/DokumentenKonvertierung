@@ -92,3 +92,27 @@ METADATA_PROMPT = (
     '"doc_date": "JJJJ-MM-TT oder null, falls kein Dokumentdatum erkennbar"}\n\n'
     'Dokumenttext:\n'
 )
+
+ENTITY_PROMPT = (
+    'Du bekommst den extrahierten Text eines Dokuments. Dokumente gehen '
+    'oft von einem Absender an einen Empfänger; zusätzlich können weitere '
+    'Personen oder Firmen erwähnt werden. Extrahiere ALLE genannten '
+    'Personen und Firmen mit ihren Kontaktdaten, so vollständig wie der '
+    'Text es hergibt. Erfinde nichts; fehlende Angaben lässt du weg (null). '
+    'Antworte AUSSCHLIESSLICH mit einem JSON-Array in genau dieser Form, '
+    'ohne Markdown-Codeblock:\n'
+    '[{"role": "absender|empfaenger|erwaehnt", '
+    '"kind": "person|firma", '
+    '"name": "Vor- und Nachname der Person oder null", '
+    '"company": "Firmenname oder null", '
+    '"address": "vollständige Anschrift in einer Zeile oder null", '
+    '"phone": "Telefonnummer oder null", '
+    '"email": "E-Mail-Adresse oder null"}]\n'
+    'Regeln: Absender = von wem das Dokument stammt (Briefkopf, '
+    'Unterschrift); Empfänger = an wen es gerichtet ist (Adressfeld). Ist '
+    'die Rolle nicht erkennbar, verwende "erwaehnt". Eine Firma ohne '
+    'konkrete Ansprechperson: "name" null, "kind" "firma". Gehört eine '
+    'Person zu einer Firma, fülle beide Felder. Gib ein leeres Array [] '
+    'zurück, wenn niemand genannt ist.\n\n'
+    'Dokumenttext:\n'
+)

@@ -27,7 +27,14 @@ from sqlalchemy import select, update
 
 from . import config, ocr
 from .db import SessionLocal
-from .models import DocStatus, Document, Page
+from .models import (
+    DocStatus,
+    Document,
+    DocumentEntity,
+    EntityKind,
+    EntityRole,
+    Page,
+)
 
 log = logging.getLogger('worker')
 
@@ -226,6 +233,35 @@ def _merge_tags(fixed: list[str], new: list[str]) -> list[str]:
     return list(fixed) + [t for t in new if t not in fixed]
 
 
+def _entity_rows(entities: list[dict]) -> list[DocumentEntity]:
+    """Extraktions-Dicts (ocr.extract_entities) in ORM-Zeilen überführen."""
+    return [
+        DocumentEntity(
+            position=pos,
+            role=EntityRole(e['role']),
+            kind=EntityKind(e['kind']) if e.get('kind') else None,
+            name=e.get('name'),
+            company=e.get('company'),
+            address=e.get('address'),
+            phone=e.get('phone'),
+            email=e.get('email'),
+        )
+        for pos, e in enumerate(entities)
+    ]
+
+
+async def _safe_entities(
+    client: httpx.AsyncClient, full_text: str, filename: str
+) -> list[dict]:
+    """Entitäten extrahieren, aber ein Fehler darf das Dokument nie
+    scheitern lassen (degradiert zu 'keine Beteiligten')."""
+    try:
+        return await ocr.extract_entities(client, full_text)
+    except Exception as exc:  # noqa: BLE001
+        log.warning('%s: Entitäten-Extraktion fehlgeschlagen: %r', filename, exc)
+        return []
+
+
 def _finish_unreadable(doc_id, reason: str) -> None:
     """Nicht lesbares Dokument abschließen: Hinweis-.docx + Tag 'Unlesbar'."""
     with SessionLocal() as db:
@@ -246,6 +282,9 @@ def _finish_unreadable(doc_id, reason: str) -> None:
         doc.status = DocStatus.done
         doc.error = None
         doc.processed_at = datetime.datetime.now(datetime.UTC)
+        # Kein sinnvoller Text -> keine Beteiligten, aber als 'versucht'
+        # markieren, damit der Backfill dieses Dokument nicht aufgreift.
+        doc.entities_at = datetime.datetime.now(datetime.UTC)
         db.commit()
 
 
@@ -375,8 +414,10 @@ async def _process(doc_id) -> None:
                 full_text = '\n\n'.join(texts)
                 if full_text.strip():
                     meta = await ocr.extract_metadata(client, full_text)
+                    entities = await _safe_entities(client, full_text, filename)
                 else:
                     meta = {'tags': [], 'summary': None, 'doc_date': None}
+                    entities = []
 
                 with SessionLocal() as db:
                     doc = db.get(Document, doc_id)
@@ -390,6 +431,8 @@ async def _process(doc_id) -> None:
                     doc.tags = _merge_tags(fixed_tags, meta['tags'])
                     doc.summary = meta['summary']
                     doc.doc_date = meta['doc_date']
+                    doc.entities = _entity_rows(entities)
+                    doc.entities_at = datetime.datetime.now(datetime.UTC)
                     doc.status = DocStatus.done
                     doc.error = None
                     doc.processed_at = datetime.datetime.now(datetime.UTC)
@@ -424,6 +467,55 @@ def _claim_next() -> object | None:
         return doc.id
 
 
+def _claim_entity_backfill() -> object | None:
+    """Ein fertiges Dokument ohne Entitäten-Extraktion greifen (Bestand).
+
+    Kandidat = status 'done' und entities_at IS NULL. Nach dem Versuch
+    wird entities_at gesetzt, daher wird jedes Dokument höchstens einmal
+    aufgegriffen — auch wenn niemand gefunden wurde.
+    """
+    with SessionLocal() as db:
+        doc = db.scalars(
+            select(Document)
+            .where(Document.status == DocStatus.done, Document.entities_at.is_(None))
+            .order_by(Document.processed_at.desc().nullslast(), Document.id)
+            .limit(1)
+        ).first()
+        return None if doc is None else doc.id
+
+
+async def _backfill_entities(doc_id) -> None:
+    """Beteiligte für ein Alt-Dokument aus dem GESPEICHERTEN Seitentext
+    nachtragen — kein erneutes OCR, nur ein Sprachmodell-Aufruf."""
+    global CURRENT
+    with SessionLocal() as db:
+        doc = db.get(Document, doc_id)
+        filename = doc.filename
+        texts = [p.content_md for p in doc.pages]
+    full_text = '\n\n'.join(texts)
+    CURRENT = {'id': str(doc_id), 'filename': f'{filename} (Beteiligte)', 'pages': None}
+    entities: list[dict] = []
+    if full_text.strip():
+        async with httpx.AsyncClient() as client:
+            entities = await ocr.extract_entities(client, full_text)
+    with SessionLocal() as db:
+        doc = db.get(Document, doc_id)
+        doc.entities = _entity_rows(entities)
+        doc.entities_at = datetime.datetime.now(datetime.UTC)
+        db.commit()
+    log.info('%s: %d Beteiligte nachgetragen', filename, len(entities))
+
+
+def _mark_entities_attempted(doc_id) -> None:
+    """entities_at setzen, ohne Beteiligte zu ändern — nach einem
+    fehlgeschlagenen Backfill, damit kein Endlos-Retry entsteht."""
+    with SessionLocal() as db:
+        doc = db.get(Document, doc_id)
+        if doc is not None:
+            doc.entities_at = datetime.datetime.now(datetime.UTC)
+            db.commit()
+
+
 def _recover_orphans() -> None:
     """Nach Neustart: unterbrochene Verarbeitungen zurück in die Queue."""
     with SessionLocal() as db:
@@ -450,6 +542,19 @@ async def worker_loop() -> None:
                 # verwaister Rest (z.B. nach Absturz) und wird requeued.
                 CURRENT = None
                 _recover_orphans()
+                # Leerlauf nutzen: Beteiligte für Alt-Dokumente nachtragen.
+                # Nur wenn die Queue leer ist, damit neue Uploads Vorrang
+                # haben und das Modell nicht doppelt belastet wird.
+                backfill_id = _claim_entity_backfill()
+                if backfill_id is not None and await ocr.is_model_up():
+                    try:
+                        await _backfill_entities(backfill_id)
+                    except Exception:  # noqa: BLE001
+                        log.exception('Entitäten-Backfill fehlgeschlagen')
+                        _mark_entities_attempted(backfill_id)
+                    finally:
+                        CURRENT = None
+                    continue
                 await asyncio.sleep(3)
                 continue
             if not await ocr.is_model_up():
