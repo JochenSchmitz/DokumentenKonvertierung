@@ -12,11 +12,13 @@ das Schlagwort 'Unlesbar'.
 
 import asyncio
 import datetime
+import io
 import logging
 import re
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -162,14 +164,37 @@ def _md_to_docx(md_text: str, outfile: Path) -> None:
         format='markdown',
         outputfile=str(outfile),
         # <br> in Zellen als echte Umbrüche; Referenz-Vorlage mit
-        # sichtbaren Tabellenrahmen (pandoc-Standard hat keine)
+        # sichtbaren Tabellenrahmen (pandoc-Standard hat keine);
+        # Dokumentsprache Deutsch, sonst stolpert die
+        # Rechtschreibprüfung (en-US) über jedes Wort
         extra_args=[
             '--lua-filter',
             str(Path(__file__).parent / 'pandoc-br.lua'),
             '--reference-doc',
             str(Path(__file__).parent / 'reference.docx'),
+            '--metadata=lang:de-DE',
         ],
     )
+
+
+def _force_german_docx(docx: Path) -> None:
+    """Dokumentsprache einer .docx auf Deutsch (de-DE) zwingen.
+
+    Ersetzt nur das w:val-Attribut der w:lang-Elemente in styles.xml
+    und document.xml — inhaltsschonend (kein Neuerzeugen), damit auch
+    in OnlyOffice bearbeitete Dateien ihre Änderungen behalten.
+    """
+    buf = io.BytesIO()
+    with (
+        zipfile.ZipFile(docx) as src,
+        zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as dst,
+    ):
+        for info in src.infolist():
+            data = src.read(info.filename)
+            if info.filename in ('word/styles.xml', 'word/document.xml'):
+                data = re.sub(rb'(<w:lang\b[^>]*?w:val=")[^"]*(")', rb'\1de-DE\2', data)
+            dst.writestr(info, data)
+    docx.write_bytes(buf.getvalue())
 
 
 def _write_results(
@@ -190,6 +215,7 @@ def _write_results(
 
     if docx_source is not None:
         shutil.copyfile(docx_source, config.RESULTS_DIR / f'{stem}.docx')
+        _force_german_docx(config.RESULTS_DIR / f'{stem}.docx')
     else:
         # Bild-Links entfernen: Konvertierung muss strikt offline bleiben
         _md_to_docx(_strip_image_links(md_text), config.RESULTS_DIR / f'{stem}.docx')
