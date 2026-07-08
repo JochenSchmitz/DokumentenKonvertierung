@@ -41,9 +41,11 @@ log = logging.getLogger('worker')
 IMAGE_SUFFIXES = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
 UNREADABLE_TAG = 'Unlesbar'
 
-# Was der (einzige) Worker WIRKLICH gerade bearbeitet — Quelle der
-# Wahrheit für die Statusanzeige, unabhängig vom DB-Status-Flag.
-CURRENT: dict | None = None
+# Was WIRKLICH gerade bearbeitet wird — Quelle der Wahrheit für die
+# Statusanzeige, unabhängig vom DB-Status-Flag. Schlüssel = Dokument-ID
+# (str), Wert = {'id', 'filename', 'pages'}. Mehrere Einträge, wenn mehrere
+# Dokumente gleichzeitig laufen (DOC_PARALLEL).
+CURRENT: dict[str, dict] = {}
 
 
 class UnreadableError(Exception):
@@ -320,10 +322,15 @@ async def _extract_texts(
     filename: str,
     doc_id,
     tmpdir: str,
+    ocr_sem: asyncio.Semaphore,
 ) -> tuple[list[str], Path | None]:
     """Dateityp-Weiche: liefert die Seitentexte und — falls das Original
-    schon Word war — den Pfad der zu übernehmenden .docx."""
-    global CURRENT
+    schon Word war — den Pfad der zu übernehmenden .docx.
+
+    ocr_sem ist das GLOBALE Seitenbudget: alle gleichzeitig laufenden
+    Dokumente teilen sich diesen Semaphor, damit nie mehr als OCR_PARALLEL
+    Seiten insgesamt am Modell hängen (nicht pro Dokument)."""
+    key = str(doc_id)
     loop = asyncio.get_running_loop()
     suffix = original.suffix.lower()
 
@@ -338,12 +345,11 @@ async def _extract_texts(
             raise UnreadableError(
                 f'PDF ist defekt oder nicht renderbar ({exc or exc!r})'
             ) from exc
-        CURRENT = {'id': str(doc_id), 'filename': filename, 'pages': len(images)}
+        CURRENT[key] = {'id': key, 'filename': filename, 'pages': len(images)}
         log.info('%s: %d Seiten -> Modell', filename, len(images))
-        sem = asyncio.Semaphore(config.OCR_PARALLEL)
         texts = await asyncio.gather(
             *(
-                _read_page(client, sem, filename, i, png)
+                _read_page(client, ocr_sem, filename, i, png)
                 for i, png in enumerate(images, 1)
             )
         )
@@ -354,14 +360,13 @@ async def _extract_texts(
             png = original.read_bytes()
         except OSError as exc:
             raise UnreadableError(f'Bilddatei nicht lesbar ({exc})') from exc
-        CURRENT = {'id': str(doc_id), 'filename': filename, 'pages': 1}
+        CURRENT[key] = {'id': key, 'filename': filename, 'pages': 1}
         log.info('%s: Bild -> Modell (lesen oder beschreiben)', filename)
-        sem = asyncio.Semaphore(1)
-        text = await _read_page(client, sem, filename, 1, png, config.IMAGE_PROMPT)
+        text = await _read_page(client, ocr_sem, filename, 1, png, config.IMAGE_PROMPT)
         return [text], None
 
     if suffix == '.msg':
-        CURRENT = {'id': str(doc_id), 'filename': filename, 'pages': 1}
+        CURRENT[key] = {'id': key, 'filename': filename, 'pages': 1}
         try:
             text = await loop.run_in_executor(None, _msg_to_markdown, original)
         except Exception as exc:  # noqa: BLE001
@@ -371,7 +376,7 @@ async def _extract_texts(
         return [text], None
 
     if suffix in ('.doc', '.docx'):
-        CURRENT = {'id': str(doc_id), 'filename': filename, 'pages': 1}
+        CURRENT[key] = {'id': key, 'filename': filename, 'pages': 1}
         docx_source = original
         if suffix == '.doc':
             try:
@@ -391,21 +396,20 @@ async def _extract_texts(
     raise UnreadableError(f'Dateityp {suffix} kann nicht verarbeitet werden')
 
 
-async def _process(doc_id) -> None:
-    global CURRENT
+async def _process(doc_id, ocr_sem: asyncio.Semaphore) -> None:
     with SessionLocal() as db:
         doc = db.get(Document, doc_id)
         original = config.ORIGINALS_DIR / doc.stored_name
         filename = doc.filename
         fixed_tags = list(doc.fixed_tags or [])
-    CURRENT = {'id': str(doc_id), 'filename': filename, 'pages': None}
+    CURRENT[str(doc_id)] = {'id': str(doc_id), 'filename': filename, 'pages': None}
     loop = asyncio.get_running_loop()
 
     try:
         async with httpx.AsyncClient() as client:
             with tempfile.TemporaryDirectory() as tmpdir:
                 texts, docx_source = await _extract_texts(
-                    client, original, filename, doc_id, tmpdir
+                    client, original, filename, doc_id, tmpdir, ocr_sem
                 )
                 # Ohne jeden lesbaren Text ist auch das Ergebnis wertlos —
                 # außer das Original war schon Word (dann übernehmen wir es).
@@ -444,8 +448,12 @@ async def _process(doc_id) -> None:
     log.info('%s: fertig (%d Seiten)', filename, len(texts))
 
 
-def _claim_next() -> object | None:
+def _claim_next() -> tuple | None:
     """Nächstes wartendes Dokument atomar auf 'processing' setzen.
+
+    Liefert (id, filename) oder None. Der SKIP-LOCKED-Claim ist
+    nebenläufigkeitssicher: mehrere Dokument-Worker greifen garantiert
+    verschiedene Dokumente.
 
     Sortierung nach Dateigröße aufsteigend: kleine Dokumente zuerst,
     damit die schnellen nicht hinter einem großen festhängen. Bei
@@ -463,8 +471,9 @@ def _claim_next() -> object | None:
         if doc is None:
             return None
         doc.status = DocStatus.processing
+        filename = doc.filename
         db.commit()
-        return doc.id
+        return doc.id, filename
 
 
 # IDs, die gerade von einem Konsumenten bearbeitet werden. Der Claim läuft
@@ -519,6 +528,11 @@ async def _backfill_one_entities(client: httpx.AsyncClient, doc_id) -> None:
         doc = db.get(Document, doc_id)
         filename = doc.filename
         texts = [p.content_md for p in doc.pages]
+    CURRENT[str(doc_id)] = {
+        'id': str(doc_id),
+        'filename': f'{filename} (Beteiligte)',
+        'pages': None,
+    }
     full_text = '\n\n'.join(texts)
     entities: list[dict] = []
     if full_text.strip():
@@ -537,8 +551,6 @@ async def _run_entity_backfill() -> None:
     holen sofort das nächste — kein Batch-Barrier, das Modell bleibt
     durchgehend ausgelastet. Ein Einzelfehler markiert nur dieses Dokument
     als versucht und stoppt den Pool nicht."""
-    global CURRENT
-    CURRENT = {'id': '', 'filename': 'Beteiligte werden nachgetragen …', 'pages': None}
 
     async def consumer(client: httpx.AsyncClient) -> None:
         while True:
@@ -552,6 +564,7 @@ async def _run_entity_backfill() -> None:
                 _mark_entities_attempted(doc_id)
             finally:
                 _backfill_in_flight.discard(doc_id)
+                CURRENT.pop(str(doc_id), None)
 
     async with httpx.AsyncClient() as client:
         await asyncio.gather(*(consumer(client) for _ in range(config.ENTITY_PARALLEL)))
@@ -580,60 +593,76 @@ def _recover_orphans() -> None:
         log.info('%d unterbrochene Dokumente zurück in die Warteschlange', n)
 
 
+async def _process_one(doc_id, ocr_sem: asyncio.Semaphore) -> None:
+    """Ein Dokument verarbeiten inkl. Fehlerbehandlung und CURRENT-Pflege.
+    Ein Fehler setzt nur DIESES Dokument auf 'error' und reißt den Pool
+    nicht mit."""
+    try:
+        await _process(doc_id, ocr_sem)
+    except Exception as exc:  # noqa: BLE001
+        log.exception('Verarbeitung fehlgeschlagen')
+        with SessionLocal() as db:
+            doc = db.get(Document, doc_id)
+            if doc is not None:
+                doc.status = DocStatus.error
+                # str(exc) kann leer sein (z.B. httpx.ReadTimeout)
+                doc.error = (str(exc) or repr(exc))[:2000]
+                db.commit()
+    finally:
+        CURRENT.pop(str(doc_id), None)
+
+
 async def worker_loop() -> None:
-    global CURRENT
-    log.info('Worker gestartet')
+    """Verarbeitet bis zu DOC_PARALLEL Dokumente gleichzeitig; alle teilen
+    sich das globale OCR_PARALLEL-Seitenbudget. Ist die OCR-Queue leer, wird
+    der Leerlauf für den Beteiligten-Nachlauf genutzt."""
+    log.info(
+        'Worker gestartet (bis %d Dokumente gleichzeitig, %d Seiten global)',
+        config.DOC_PARALLEL,
+        config.OCR_PARALLEL,
+    )
+    # Beim Start: alle 'processing'-Reste (Absturz/Neustart) zurück in die
+    # Queue. Danach ist jedes 'processing' echt in Arbeit (in `inflight`),
+    # daher ist während des Betriebs keine weitere Selbstheilung nötig.
     _recover_orphans()
+    ocr_sem = asyncio.Semaphore(config.OCR_PARALLEL)
+    inflight: set[asyncio.Task] = set()
+
     while True:
         try:
-            # Vorrang für den einmaligen Nachlauf: solange es fertige
-            # Alt-Dokumente ohne Entitäten-Versuch gibt, werden ERST diese
-            # auf Beteiligte untersucht (nur ein Modell-Aufruf aus dem
-            # gespeicherten Text, kein OCR) — die OCR-Queue pausiert so lange.
-            # Ist der Bestand nachgezogen, ist _has_entity_backfill() False
-            # und der normale OCR-Betrieb läuft von selbst weiter.
-            if _has_entity_backfill():
-                if not await ocr.is_model_up():
-                    CURRENT = None
-                    await asyncio.sleep(15)
-                    continue
-                try:
-                    await _run_entity_backfill()
-                finally:
-                    CURRENT = None
+            model_up = await ocr.is_model_up()
+
+            # Freie Slots mit neuen OCR-Dokumenten füllen (nur wenn Modell da)
+            while model_up and len(inflight) < config.DOC_PARALLEL:
+                claimed = _claim_next()
+                if claimed is None:
+                    break
+                doc_id, filename = claimed
+                CURRENT[str(doc_id)] = {
+                    'id': str(doc_id),
+                    'filename': filename,
+                    'pages': None,
+                }
+                inflight.add(asyncio.create_task(_process_one(doc_id, ocr_sem)))
+
+            if inflight:
+                # Auf den nächsten Abschluss warten, dann Slots nachfüllen
+                done, _ = await asyncio.wait(
+                    inflight, return_when=asyncio.FIRST_COMPLETED
+                )
+                inflight -= done
                 continue
 
-            doc_id = _claim_next()
-            if doc_id is None:
-                # Selbstheilung: es gibt nur diesen einen Worker — wenn er
-                # nichts bearbeitet, ist jedes 'processing' in der DB ein
-                # verwaister Rest (z.B. nach Absturz) und wird requeued.
-                CURRENT = None
-                _recover_orphans()
-                await asyncio.sleep(3)
-                continue
-            if not await ocr.is_model_up():
-                log.warning(
-                    'OCR-Modell (Port 8012) nicht erreichbar — '
-                    'Dokument bleibt in Warteschlange'
-                )
-                with SessionLocal() as db:
-                    db.get(Document, doc_id).status = DocStatus.pending
-                    db.commit()
+            # Keine OCR-Dokumente in Arbeit:
+            if not model_up:
+                log.warning('OCR-Modell nicht erreichbar — warte')
                 await asyncio.sleep(15)
                 continue
-            try:
-                await _process(doc_id)
-            except Exception as exc:  # noqa: BLE001
-                log.exception('Verarbeitung fehlgeschlagen')
-                with SessionLocal() as db:
-                    doc = db.get(Document, doc_id)
-                    doc.status = DocStatus.error
-                    # str(exc) kann leer sein (z.B. httpx.ReadTimeout)
-                    doc.error = (str(exc) or repr(exc))[:2000]
-                    db.commit()
-            finally:
-                CURRENT = None
+            # Leerlauf: Beteiligte für Alt-Dokumente nachtragen (eigener Pool)
+            if _has_entity_backfill():
+                await _run_entity_backfill()
+                continue
+            await asyncio.sleep(3)
         except Exception:  # noqa: BLE001
             log.exception('Worker-Schleife: unerwarteter Fehler')
             await asyncio.sleep(10)

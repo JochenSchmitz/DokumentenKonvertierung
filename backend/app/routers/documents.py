@@ -404,17 +404,15 @@ def list_documents(db: SessionDep, user: auth.UserDep, q: str = '', tags: str = 
             )
         )
 
-    # Anzeige-Wahrheit: 'processing' zeigt nur das Dokument, das der
-    # (einzige) Worker laut eigener Auskunft WIRKLICH bearbeitet.
-    # Verwaiste Flags (Absturz, Neustart) erscheinen als 'wartet',
-    # bis die Selbstheilung sie requeued.
+    # Anzeige-Wahrheit: 'processing' zeigt nur die Dokumente, die der Worker
+    # laut eigener Auskunft (worker.CURRENT) WIRKLICH gerade bearbeitet.
+    # Verwaiste Flags (Absturz, Neustart) erscheinen als 'wartet', bis die
+    # Selbstheilung beim nächsten Start sie requeued.
     current = worker.CURRENT
     result = []
     for doc in db.scalars(stmt).all():
         item = DocumentOut.model_validate(doc)
-        if item.status == DocStatus.processing and (
-            current is None or current.get('id') != str(doc.id)
-        ):
+        if item.status == DocStatus.processing and str(doc.id) not in current:
             item.status = DocStatus.pending
         result.append(item)
     return result

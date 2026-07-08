@@ -56,6 +56,11 @@ OCR_DPI = int(os.environ.get('OCR_DPI', '200'))
 # Die Extraktion ist reiner Text (bis 40k Zeichen); 8 gleichzeitig belegen
 # nur einen Bruchteil des KV-Caches und bringen ggü. seriell ~5x Durchsatz.
 ENTITY_PARALLEL = int(os.environ.get('ENTITY_PARALLEL', '8'))
+# Wie viele Dokumente gleichzeitig verarbeitet werden (Dokument-Ebene). Alle
+# teilen sich das globale OCR_PARALLEL-Seitenbudget. Bei einer GPU reicht 1;
+# mit dem Mehr-GPU-LB höher, damit auch viele kleine Dokumente beide GPUs
+# auslasten (ein einzelnes kleines Dokument allein tut das nicht).
+DOC_PARALLEL = int(os.environ.get('DOC_PARALLEL', '1'))
 
 OCR_PROMPT = (
     'Extrahiere den vollständigen Text dieser gescannten Dokumentseite. '

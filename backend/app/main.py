@@ -196,15 +196,17 @@ async def processing_status(user: UserDep, db: SessionDep):
     from . import worker
     from .models import DocStatus, Document
 
-    current = worker.CURRENT
+    # worker.CURRENT: Dict der GERADE laufenden Dokumente (mehrere möglich)
+    current = list(worker.CURRENT.values())
+    total_pages = sum(c['pages'] for c in current if c.get('pages'))
     pending = db.scalar(
         select(func.count())
         .select_from(Document)
         .where(Document.status.in_((DocStatus.pending, DocStatus.processing)))
-    ) - (1 if current else 0)
+    ) - len(current)
     return {
-        'processing': [current['filename']] if current else [],
-        'currentPages': current['pages'] if current else None,
+        'processing': [c['filename'] for c in current],
+        'currentPages': total_pages or None,
         'pending': max(pending, 0),
         'modelUp': await ocr.is_model_up(),
         **await _vllm_counters(),
