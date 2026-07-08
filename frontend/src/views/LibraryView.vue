@@ -30,8 +30,15 @@ onUnmounted(() => {
 })
 
 // ── Sortierung: Klick auf Spaltenkopf, zweiter Klick dreht die Richtung ──
-type SortKey = 'filename' | 'page_count' | 'doc_date' | 'tags' | 'uploaded_at'
-const sortKey = ref<SortKey>('uploaded_at') // Standard: neueste Importe oben
+type SortKey =
+  | 'filename'
+  | 'page_count'
+  | 'doc_date'
+  | 'tags'
+  | 'uploaded_at'
+  | 'processed_at'
+// Standard: zuletzt fertig verarbeitete Dokumente oben
+const sortKey = ref<SortKey>('processed_at')
 const sortDir = ref<1 | -1>(-1)
 
 function setSort(key: SortKey) {
@@ -60,6 +67,8 @@ function compare(a: DocumentOut, b: DocumentOut): number {
       })
     case 'uploaded_at':
       return a.uploaded_at.localeCompare(b.uploaded_at)
+    case 'processed_at':
+      return (a.processed_at ?? '').localeCompare(b.processed_at ?? '')
   }
 }
 
@@ -129,6 +138,7 @@ function stem(name: string): string {
                 ['page_count', 'Seiten'],
                 ['doc_date', 'Dok.-Datum'],
                 ['uploaded_at', 'Importiert am'],
+                ['processed_at', 'Verarbeitet am'],
                 ['tags', 'Schlagworte'],
               ] as [SortKey, string][])"
               :key="col[0]"
@@ -158,6 +168,9 @@ function stem(name: string): string {
             <td>{{ doc.page_count ?? '—' }}</td>
             <td>{{ fmtDate(doc.doc_date) }}</td>
             <td class="imported">{{ fmtDateTime(doc.uploaded_at) }}</td>
+            <td class="imported">
+              {{ doc.processed_at ? fmtDateTime(doc.processed_at) : '—' }}
+            </td>
             <td>
               <button
                 v-for="tag in doc.tags"
