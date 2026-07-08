@@ -6,12 +6,15 @@ import {
   mdiDelete,
   mdiDownload,
   mdiMagnify,
+  mdiMenuDown,
+  mdiMenuUp,
   mdiReload,
   mdiTagOutline,
 } from '@mdi/js'
 import MdiIcon from '../components/MdiIcon.vue'
 import UploadZone from '../components/UploadZone.vue'
 import { useDocumentsStore } from '../stores/documents'
+import { fmtDate, fmtDateTime, useDocSort, type SortKey } from '../docsort'
 import type { DocumentOut } from '../api'
 
 const store = useDocumentsStore()
@@ -41,7 +44,8 @@ onUnmounted(() => {
 const queueDocs = computed(() =>
   store.docs.filter((d) => d.status !== 'done'),
 )
-const doneDocs = computed(() =>
+// Sortierung wie in der Bibliothek: Klick auf den Spaltenkopf
+const { sortKey, sortDir, setSort, sorted: doneDocs } = useDocSort(() =>
   (store.results ?? store.docs).filter((d) => d.status === 'done'),
 )
 
@@ -56,10 +60,6 @@ function fmtSize(bytes: number): string {
   return bytes > 1048576
     ? `${(bytes / 1048576).toFixed(1)} MB`
     : `${Math.round(bytes / 1024)} kB`
-}
-
-function fmtDate(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleDateString('de-DE') : '—'
 }
 
 async function remove(doc: DocumentOut) {
@@ -187,11 +187,28 @@ onUnmounted(() => {
         <table v-if="doneDocs.length">
           <thead>
             <tr>
-              <th>Dokument</th>
-              <th>Seiten</th>
-              <th>Dok.-Datum</th>
-              <th>Schlagworte</th>
-              <th>Größe</th>
+              <th
+                v-for="col in ([
+                  ['filename', 'Dokument'],
+                  ['page_count', 'Seiten'],
+                  ['doc_date', 'Dok.-Datum'],
+                  ['uploaded_at', 'Importiert am'],
+                  ['processed_at', 'Verarbeitet am'],
+                  ['tags', 'Schlagworte'],
+                  ['size_bytes', 'Größe'],
+                ] as [SortKey, string][])"
+                :key="col[0]"
+                class="sortable"
+                :title="`Nach ${col[1]} sortieren`"
+                @click="setSort(col[0])"
+              >
+                {{ col[1] }}
+                <MdiIcon
+                  v-if="sortKey === col[0]"
+                  :path="sortDir === 1 ? mdiMenuUp : mdiMenuDown"
+                  :size="16"
+                />
+              </th>
               <th></th>
             </tr>
           </thead>
@@ -206,6 +223,8 @@ onUnmounted(() => {
               </td>
               <td>{{ doc.page_count ?? '—' }}</td>
               <td>{{ fmtDate(doc.doc_date) }}</td>
+              <td class="stamp">{{ fmtDateTime(doc.uploaded_at) }}</td>
+              <td class="stamp">{{ fmtDateTime(doc.processed_at) }}</td>
               <td>
                 <button
                   v-for="tag in doc.tags"
@@ -374,6 +393,21 @@ th {
   font-size: 0.85rem;
   border-bottom: 2px solid var(--border);
   padding: 0.4rem 0.6rem;
+}
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+th.sortable:hover {
+  color: var(--text);
+}
+th.sortable :deep(svg) {
+  vertical-align: -3px;
+}
+.stamp {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 td {
   border-bottom: 1px solid var(--border);
