@@ -83,7 +83,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="viewer">
     <div class="head">
-      <button class="navbtn" @click="router.push({ name: 'documents' })">
+      <button class="navbtn" @click="router.push({ name: 'upload' })">
         <MdiIcon :path="mdiArrowLeft" :size="16" /> Übersicht
       </button>
       <h2>{{ doc?.filename ?? '…' }}</h2>
