@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .. import auth, config
 from ..db import SessionDep
-from ..models import DocStatus, Document, Page
+from ..models import DocStatus, Document, DocumentEntity, Page
 from ..schemas import (
     DocumentDetail,
     DocumentOut,
@@ -362,16 +362,20 @@ async def upload(files: list[UploadFile], db: SessionDep, user: auth.UserDep):
 def list_documents(db: SessionDep, user: auth.UserDep, q: str = '', tags: str = ''):
     """Dokumentliste, optional gefiltert per Trigram-Suche (pg_trgm).
 
-    Durchsucht Dateiname, Zusammenfassung, Schlagworte und den
-    OCR-Volltext aller Seiten. Der Vergleich ist leerzeichen-
-    unempfindlich: Query und Text werden ohne Whitespace verglichen,
-    daher findet "ad blue" auch "AdBlue" und "Gewähr Leistung" auch
+    Durchsucht Dateiname, Zusammenfassung, Schlagworte, den OCR-Volltext
+    aller Seiten UND die Beteiligten (Name/Firma/Anschrift).
+
+    Mehrere Suchwörter werden UND-verknüpft: "Weising Scholz" findet nur
+    Dokumente, in denen BEIDE Wörter vorkommen (jeweils in einem
+    beliebigen Feld). Jedes Wort einzeln ist leerzeichen-unempfindlich, so
+    findet "ad blue" auch "AdBlue" und "Gewähr Leistung" auch
     "Gewährleistung". Die GIN-Trigram-Expression-Indizes halten die
     ILIKE-'%...%'-Suchen auch bei großen Beständen schnell.
 
-    Zusätzlich tippfehlertolerant: Name, Schlagworte und Zusammenfassung
-    werden per Trigramm-Wortähnlichkeit (pg_trgm) gematcht, sodass auch
-    Vertipper ("rechng" -> "Rechnung") treffen. Der Volltext bleibt exakt.
+    Zusätzlich tippfehlertolerant: Name, Schlagworte, Zusammenfassung und
+    Beteiligte werden pro Wort per Trigramm-Wortähnlichkeit (pg_trgm)
+    gematcht, sodass auch Vertipper ("rechng" -> "Rechnung") treffen. Der
+    Volltext bleibt exakt (Fuzzy über ganze Seiten brächte zu viel Rauschen).
     """
     from .. import worker
 
@@ -387,42 +391,67 @@ def list_documents(db: SessionDep, user: auth.UserDep, q: str = '', tags: str = 
     if tag_list:
         stmt = stmt.where(Document.tags.contains(tag_list))
 
-    q_raw = q.strip()  # Original (mit Leerzeichen) für die Ähnlichkeitssuche
-    q = ''.join(q.split())  # Whitespace aus der Query entfernen
-    if q:
-        escaped = q.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-        like = f'%{escaped}%'
+    # Query wortweise: mehrere Wörter werden UND-verknüpft (jedes Wort muss
+    # in irgendeinem Feld treffen). So findet "Weising Scholz" das Dokument,
+    # in dem beide Namen als Beteiligte stehen.
+    terms = q.split()
+    if terms:
 
         def squeezed(col):
             # Muss exakt dem Ausdruck der Expression-Indizes entsprechen
             return func.regexp_replace(col, '\\s', '', 'g')
 
-        page_match = (
-            select(Page.id)
-            .where(
-                Page.document_id == Document.id,
-                squeezed(Page.content_md).ilike(like),
-            )
-            .exists()
-        )
         tags_str = func.array_to_string(Document.tags, ' ')
-        # Tippfehlertoleranz per Trigramm-Wortähnlichkeit (pg_trgm) auf den
-        # KURZEN Feldern (Name, Schlagworte, Zusammenfassung): "rechng" findet
-        # "Rechnung". word_similarity ist trigrammbasiert und damit case-
-        # unempfindlich. Der Volltext bleibt bewusst bei exakter Teilstring-
-        # Suche — Fuzzy über ganze Dokumente brächte zu viele Fehltreffer.
         fuzzy = func.word_similarity
-        stmt = stmt.where(
-            or_(
+
+        def term_clause(term: str):
+            # Pro Wort weiterhin leerzeichen-unempfindlich: das gequetschte
+            # "AdBlue" enthält sowohl "ad" als auch "blue", daher findet
+            # "ad blue" (zwei Wörter, UND-verknüpft) weiter "AdBlue".
+            sq = ''.join(term.split())
+            escaped = sq.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            like = f'%{escaped}%'
+            page_match = (
+                select(Page.id)
+                .where(
+                    Page.document_id == Document.id,
+                    squeezed(Page.content_md).ilike(like),
+                )
+                .exists()
+            )
+            # Beteiligte (Name/Firma/Anschrift) mitdurchsuchen — exakt als
+            # Teilstring UND tippfehlertolerant auf Name/Firma.
+            entity_match = (
+                select(DocumentEntity.id)
+                .where(
+                    DocumentEntity.document_id == Document.id,
+                    or_(
+                        squeezed(DocumentEntity.name).ilike(like),
+                        squeezed(DocumentEntity.company).ilike(like),
+                        squeezed(DocumentEntity.address).ilike(like),
+                        fuzzy(term, DocumentEntity.name) >= FUZZY_THRESHOLD,
+                        fuzzy(term, DocumentEntity.company) >= FUZZY_THRESHOLD,
+                    ),
+                )
+                .exists()
+            )
+            # Tippfehlertoleranz per Trigramm-Wortähnlichkeit (pg_trgm) auf den
+            # KURZEN Feldern (Name, Schlagworte, Zusammenfassung, Beteiligte):
+            # "rechng" findet "Rechnung". Der Volltext bleibt bei exakter
+            # Teilstring-Suche — Fuzzy über ganze Seiten brächte zu viel Rauschen.
+            return or_(
                 squeezed(Document.filename).ilike(like),
                 squeezed(Document.summary).ilike(like),
                 squeezed(tags_str).ilike(like),
                 page_match,
-                fuzzy(q_raw, Document.filename) >= FUZZY_THRESHOLD,
-                fuzzy(q_raw, tags_str) >= FUZZY_THRESHOLD,
-                fuzzy(q_raw, Document.summary) >= FUZZY_THRESHOLD,
+                entity_match,
+                fuzzy(term, Document.filename) >= FUZZY_THRESHOLD,
+                fuzzy(term, tags_str) >= FUZZY_THRESHOLD,
+                fuzzy(term, Document.summary) >= FUZZY_THRESHOLD,
             )
-        )
+
+        for term in terms:
+            stmt = stmt.where(term_clause(term))
 
     # Anzeige-Wahrheit: 'processing' zeigt nur die Dokumente, die der Worker
     # laut eigener Auskunft (worker.CURRENT) WIRKLICH gerade bearbeitet.
